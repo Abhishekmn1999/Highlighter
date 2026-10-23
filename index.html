@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TIFR Visitor Highlighter | Neat & Clean Document Scanner</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- PDF.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- Tesseract.js (Client-side OCR for scanned PDFs) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <!-- PDF-Lib -->
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <!-- JSZip -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f7ff',
+              100: '#e0effe',
+              500: '#0284c7',
+              600: '#0369a1',
+              700: '#075985',
+              800: '#0c4a6e',
+              900: '#082f49',
+            },
+            amberHighlight: '#FFC101'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 h-screen flex flex-col overflow-hidden">
+
+  <!-- Top App Navigation Bar -->
+  <header class="bg-white border-b border-slate-200 px-5 py-2.5 flex items-center justify-between shrink-0 shadow-xs z-20">
+    <div class="flex items-center space-x-3">
+      <div class="w-9 h-9 rounded-xl bg-amber-500 text-slate-900 flex items-center justify-center font-bold text-lg shadow-sm">
+        <i data-lucide="highlighter" class="w-5 h-5 stroke-[2.2]"></i>
+      </div>
+      <div>
+        <div class="flex items-center space-x-2">
+          <h1 class="text-base font-bold text-slate-900 leading-tight">TIFR Visitor Highlighter</h1>
+          <span class="px-2 py-0.5 text-[11px] font-semibold bg-sky-100 text-sky-800 rounded-full">Pro Clean</span>
+          <span id="status-pill" class="text-[11px] px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-600">
+            Ready
+          </span>
+        </div>
+        <p class="text-[11px] text-slate-500">Scan approvals, highlight visitor lines & merge in sheet order</p>
+      </div>
+    </div>
+
+    <!-- Quick Actions in Header -->
+    <div class="flex items-center space-x-2.5">
+      <button id="btn-sample-data" class="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition flex items-center space-x-1.5 shadow-2xs">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-500"></i>
+        <span>Sample Visitors</span>
+      </button>
+
+      <button id="btn-open-settings" class="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition flex items-center space-x-1.5 shadow-2xs">
+        <i data-lucide="sliders" class="w-3.5 h-3.5 text-slate-500"></i>
+        <span>Settings</span>
+      </button>
+
+      <!-- Prominent Download Buttons (Active when processed) -->
+      <div id="download-actions" class="hidden flex items-center space-x-2">
+        <button id="btn-download-combined" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-xs shadow-xs transition flex items-center space-x-1.5" title="Download all individual visitor approval letters combined in sheet order">
+          <i data-lucide="file-check" class="w-3.5 h-3.5"></i>
+          <span>Download Combined PDF</span>
+        </button>
+        <button id="btn-download-master" class="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg font-medium text-xs shadow-xs transition flex items-center space-x-1.5" title="Download master letter with all visitors highlighted together">
+          <i data-lucide="layers" class="w-3.5 h-3.5 text-slate-300"></i>
+          <span class="hidden md:inline">Master Overview</span>
+        </button>
+        <button id="btn-download-zip" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-semibold text-xs shadow-xs transition flex items-center space-x-1.5" title="Download ZIP containing separate PDF for each visitor">
+          <i data-lucide="archive" class="w-3.5 h-3.5"></i>
+          <span>ZIP</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Split Layout (Left: Inputs & Controls, Right: Live Interactive Document Viewer) -->
+  <div class="flex-1 flex overflow-hidden">
+
+    <!-- LEFT PANEL: Inputs & Controls (Adjustable width, vertically scrollable) -->
+    <aside id="panel-left-sidebar" class="w-[410px] bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-y-auto custom-scrollbar p-5 space-y-5 transition-[width]">
+
+      <!-- Step 1: Visitor List -->
+      <div class="bg-slate-50/70 rounded-xl border border-slate-200 p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <span class="w-5 h-5 rounded-full bg-sky-600 text-white text-[11px] font-bold flex items-center justify-center">1</span>
+            <h2 class="font-semibold text-slate-900 text-xs uppercase tracking-wider">Visitor List (Column A)</h2>
+          </div>
+          
+          <!-- Width Controls & Presets -->
+          <div class="flex items-center space-x-1">
+            <span id="badge-visitor-count" class="text-[11px] bg-white border border-slate-200 text-slate-600 font-medium px-2 py-0.5 rounded-full mr-1">0 visitors</span>
+            <button id="btn-width-compact" class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 transition" title="Compact Width (320px)">
+              320px
+            </button>
+            <button id="btn-width-default" class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 transition" title="Default Width (420px)">
+              420px
+            </button>
+            <button id="btn-width-wide" class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 transition" title="Wide Width (560px)">
+              Wide
+            </button>
+            <button id="btn-panel-toggle" class="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition" title="Collapse / Expand Left Panel">
+              <i data-lucide="chevrons-left" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </div>
+
+        <textarea id="input-visitors" rows="5" class="w-full text-xs font-mono p-3 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none custom-scrollbar" placeholder="Paste Column A from Google Sheet...
+1. Jorge Arturo Hernandez Caballero from Benemérita...
+2. Mohit Randeria from Ohio State..."></textarea>
+
+        <div class="flex items-center justify-between text-xs pt-0.5">
+          <label class="cursor-pointer text-sky-600 hover:text-sky-700 font-medium flex items-center space-x-1">
+            <i data-lucide="file-up" class="w-3.5 h-3.5"></i>
+            <span>Import .txt / .csv</span>
+            <input type="file" id="file-visitors-import" accept=".txt,.csv" class="hidden">
+          </label>
+          <button id="btn-clear-visitors" class="text-slate-400 hover:text-rose-600 transition text-[11px]">Clear list</button>
+        </div>
+
+        <div id="container-parsed-visitors" class="hidden border-t border-slate-200/60 pt-2.5">
+          <div id="list-parsed-visitors" class="max-h-24 overflow-y-auto custom-scrollbar flex flex-wrap gap-1 text-[11px]">
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: Upload Source PDFs -->
+      <div class="bg-slate-50/70 rounded-xl border border-slate-200 p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <span class="w-5 h-5 rounded-full bg-sky-600 text-white text-[11px] font-bold flex items-center justify-center">2</span>
+            <h2 class="font-semibold text-slate-900 text-xs uppercase tracking-wider">Source PDF Letters</h2>
+          </div>
+          <span id="badge-pdf-count" class="text-[11px] bg-white border border-slate-200 text-slate-600 font-medium px-2 py-0.5 rounded-full">0 files</span>
+        </div>
+
+        <div id="dropzone" class="border-2 border-dashed border-slate-300 rounded-xl p-5 text-center hover:border-sky-500 hover:bg-sky-50/40 transition cursor-pointer relative bg-white">
+          <input type="file" id="file-pdf-input" multiple accept=".pdf" class="absolute inset-0 opacity-0 cursor-pointer">
+          <div class="space-y-1.5 pointer-events-none">
+            <div class="w-9 h-9 mx-auto rounded-full bg-sky-50 text-sky-600 flex items-center justify-center">
+              <i data-lucide="upload-cloud" class="w-5 h-5"></i>
+            </div>
+            <p class="text-xs font-semibold text-slate-700">Click or drag & drop PDF approval letters</p>
+            <p class="text-[11px] text-slate-400">Upload all letters (Letter1.pdf, Letter2.pdf...)</p>
+          </div>
+        </div>
+
+        <div id="list-pdf-files" class="space-y-1 max-h-32 overflow-y-auto custom-scrollbar"></div>
+      </div>
+
+      <!-- Action Button: Scan & Highlight -->
+      <div class="space-y-2.5">
+        <button id="btn-start-process" disabled class="w-full py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-semibold text-xs shadow-md transition flex items-center justify-center space-x-2">
+          <i data-lucide="play" class="w-4 h-4 fill-white"></i>
+          <span>Scan PDFs & Highlight Visitors</span>
+        </button>
+
+        <!-- Progress Indicator -->
+        <div id="progress-container" class="hidden space-y-1.5 bg-slate-50 border border-slate-200 p-3 rounded-xl">
+          <div class="flex justify-between text-xs">
+            <span id="progress-status" class="font-medium text-slate-700">Processing...</span>
+            <span id="progress-percent" class="font-bold text-sky-600">0%</span>
+          </div>
+          <div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+            <div id="progress-bar-fill" class="bg-sky-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Processing Summary Counts -->
+      <div class="grid grid-cols-3 gap-2 text-center text-xs">
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
+          <div class="text-[10px] text-slate-500 uppercase font-semibold">Total</div>
+          <div id="stat-total" class="text-lg font-bold text-slate-800">0</div>
+        </div>
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5">
+          <div class="text-[10px] text-emerald-600 uppercase font-semibold">Found</div>
+          <div id="stat-found" class="text-lg font-bold text-emerald-700">0</div>
+        </div>
+        <div class="bg-rose-50 border border-rose-200 rounded-xl p-2.5">
+          <div class="text-[10px] text-rose-600 uppercase font-semibold">Missing</div>
+          <div id="stat-missing" class="text-lg font-bold text-rose-700">0</div>
+        </div>
+      </div>
+
+      <!-- Missing Visitors Alert Banner -->
+      <div id="banner-missing" class="hidden bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-800">
+        <div class="font-semibold flex items-center space-x-1.5 mb-1 text-rose-900">
+          <i data-lucide="alert-triangle" class="w-4 h-4 text-rose-600"></i>
+          <span>Not Found in Uploaded PDFs:</span>
+        </div>
+        <ul id="list-missing-names" class="list-disc list-inside space-y-0.5 text-rose-700 pl-1 font-mono text-[11px]"></ul>
+      </div>
+
+      <!-- Visitor Results Table (Collapsible) -->
+      <div class="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col text-xs">
+        <div class="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+          <span class="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Visitor List & Status</span>
+          <span class="text-[10px] text-slate-500">Click name to jump</span>
+        </div>
+        <div class="max-h-48 overflow-y-auto custom-scrollbar">
+          <table class="w-full text-left text-xs">
+            <tbody id="table-results-body" class="divide-y divide-slate-100">
+              <tr>
+                <td class="px-3 py-4 text-center text-slate-400 text-xs">
+                  Paste visitors and upload PDFs to begin
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Collapsible Settings Panel -->
+      <div id="panel-settings" class="hidden bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3 text-xs">
+        <div class="flex items-center justify-between font-semibold text-slate-800">
+          <span class="flex items-center space-x-1.5">
+            <i data-lucide="sliders" class="w-3.5 h-3.5 text-slate-500"></i>
+            <span>Highlight & OCR Settings</span>
+          </span>
+          <button onclick="document.getElementById('panel-settings').classList.add('hidden')" class="text-slate-400 hover:text-slate-600">
+            <i data-lucide="x" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+        <div class="space-y-2">
+          <div>
+            <label class="block text-slate-600 mb-1 font-medium">OCR Mode</label>
+            <select id="cfg-ocr-mode" class="w-full p-1.5 bg-white border border-slate-300 rounded-lg text-xs">
+              <option value="auto">Auto (Detect scanned pages)</option>
+              <option value="force">Always Run OCR (Scanned letters)</option>
+              <option value="digital">Digital Text Only (Fastest)</option>
+            </select>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-slate-600 mb-1 font-medium">Highlight Color</label>
+              <div class="flex items-center space-x-1.5">
+                <input type="color" id="cfg-highlight-color" value="#FFC101" class="w-7 h-7 rounded border border-slate-300 cursor-pointer p-0.5">
+                <span id="cfg-color-hex" class="font-mono text-slate-600 text-[11px] uppercase">#FFC101</span>
+              </div>
+            </div>
+            <div>
+              <label class="block text-slate-600 mb-1 font-medium">Line Padding</label>
+              <input type="number" id="cfg-pad-y" value="4" min="0" max="15" class="w-full p-1.5 bg-white border border-slate-300 rounded-lg text-xs">
+            </div>
+            <div>
+              <label class="block text-slate-600 mb-1 font-medium">Corner Radius</label>
+              <input type="number" id="cfg-radius" value="6" min="0" max="20" class="w-full p-1.5 bg-white border border-slate-300 rounded-lg text-xs">
+            </div>
+            <div>
+              <label class="block text-slate-600 mb-1 font-medium">Dark Threshold</label>
+              <input type="number" id="cfg-threshold" value="140" min="50" max="220" class="w-full p-1.5 bg-white border border-slate-300 rounded-lg text-xs">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity Log (Drawer) -->
+      <div class="border-t border-slate-200 pt-3">
+        <div class="flex items-center justify-between cursor-pointer" onclick="document.getElementById('log-drawer').classList.toggle('hidden')">
+          <div class="flex items-center space-x-1.5 text-slate-600 text-xs font-semibold">
+            <i data-lucide="terminal" class="w-3.5 h-3.5 text-slate-400"></i>
+            <span>Live Scan Log</span>
+          </div>
+          <span class="text-[10px] text-sky-600 font-medium">Toggle</span>
+        </div>
+        <div id="log-drawer" class="hidden mt-2 bg-slate-900 text-slate-200 font-mono text-[11px] p-2.5 rounded-lg max-h-36 overflow-y-auto custom-scrollbar space-y-1">
+          <div class="text-slate-400">Ready. Paste visitors and upload PDFs.</div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Draggable Split Resizer Bar between Left Panel & Right Viewer Stage -->
+    <div id="split-resizer" class="w-1.5 hover:w-2.5 active:w-2.5 bg-slate-200 hover:bg-sky-500 active:bg-sky-600 cursor-col-resize shrink-0 transition-all z-20 flex items-center justify-center group select-none shadow-xs" title="Drag left/right to adjust Visitor List and Preview width">
+      <div class="h-10 w-1 rounded-full bg-slate-400 group-hover:bg-white transition-colors"></div>
+    </div>
+
+    <!-- RIGHT PANEL: THE MAIN STAGE — LIVE INTERACTIVE DOCUMENT VIEWER -->
+    <main class="flex-1 bg-slate-900/90 flex flex-col overflow-hidden relative">
+
+      <!-- Viewer Sticky Top Bar -->
+      <div id="viewer-top-bar" class="bg-slate-900/95 border-b border-slate-800 px-6 py-2.5 flex items-center justify-between shrink-0 text-white z-10 backdrop-blur-md">
+        <div class="flex items-center space-x-3">
+          <button id="btn-toggle-left-panel" class="p-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition" title="Toggle Visitor List Panel (Expand / Collapse)">
+            <i data-lucide="panel-left" class="w-4 h-4"></i>
+          </button>
+          <div class="flex items-center space-x-2">
+            <i data-lucide="file-text" class="w-4 h-4 text-sky-400"></i>
+            <h2 class="text-sm font-bold text-white">Document Preview</h2>
+          </div>
+          <span id="live-viewer-page-count" class="text-xs bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-full border border-slate-700">
+            Awaiting scan
+          </span>
+
+          <!-- Thumbnails Toggle Button -->
+          <button id="viewer-btn-toggle-thumbnails" class="px-2.5 py-1 text-xs font-semibold rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 transition flex items-center space-x-1.5 shadow-2xs" title="Toggle Thumbnail Sidebar">
+            <i data-lucide="layout-grid" class="w-3.5 h-3.5 text-amber-400"></i>
+            <span>Thumbnails</span>
+          </button>
+
+          <!-- Mode Switcher: Individual Visitor Files vs All Highlights -->
+          <div class="inline-flex rounded-lg bg-slate-800 p-0.5 border border-slate-700">
+            <button id="viewer-tab-individual" class="px-2.5 py-1 text-xs font-semibold rounded-md transition bg-sky-600 text-white shadow" title="View all individual visitor files one by one with dedicated titles">
+              👤 Individual Files
+            </button>
+            <button id="viewer-tab-all" class="px-2.5 py-1 text-xs font-semibold rounded-md transition text-slate-400 hover:text-slate-200" title="View source files with all visitors highlighted together">
+              📑 All Highlights
+            </button>
+          </div>
+        </div>
+
+        <!-- Jump to Visitor Dropdown -->
+        <div class="flex items-center space-x-2">
+          <label for="viewer-jump-select" class="text-xs text-slate-400 font-medium hidden sm:inline">Jump to:</label>
+          <select id="viewer-jump-select" class="text-xs bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-1.5 font-medium outline-none focus:ring-1 focus:ring-sky-500 max-w-[280px] truncate" title="Jump to visitor in document">
+            <option value="">-- Select a Visitor --</option>
+          </select>
+        </div>
+
+        <!-- Viewer Controls: Zoom, Print, Open Tab -->
+        <div class="flex items-center space-x-2 text-xs">
+          <!-- Zoom Controls -->
+          <div class="flex items-center bg-slate-800 border border-slate-700 rounded-lg p-0.5">
+            <button id="viewer-btn-zoom-out" class="p-1 hover:bg-slate-700 rounded text-slate-300" title="Zoom Out">
+              <i data-lucide="zoom-out" class="w-3.5 h-3.5"></i>
+            </button>
+            <span id="viewer-zoom-label" class="text-[11px] font-mono px-2 text-slate-400">100%</span>
+            <button id="viewer-btn-zoom-in" class="p-1 hover:bg-slate-700 rounded text-slate-300" title="Zoom In">
+              <i data-lucide="zoom-in" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+
+          <button id="viewer-btn-fit-width" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium transition" title="Fit to standard reading width">
+            Fit Width
+          </button>
+
+          <button id="viewer-btn-print" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium flex items-center space-x-1.5 transition" title="Print document">
+            <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+            <span class="hidden sm:inline">Print</span>
+          </button>
+
+          <button id="btn-open-preview-window" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-medium flex items-center space-x-1.5 shadow-sm transition" title="Open complete document in dedicated browser tab">
+            <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+            <span>New Tab</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Viewer Body (Thumbnail Rail + Live Document Scroll Area) -->
+      <div class="flex-1 flex overflow-hidden relative">
+
+        <!-- Collapsible Thumbnail Sidebar -->
+        <aside id="viewer-thumbnail-sidebar" class="w-60 bg-slate-950/95 border-r border-slate-800 flex flex-col shrink-0 transition-all duration-300 z-10 hidden shadow-xl">
+          <div class="p-3 border-b border-slate-800/80 flex items-center justify-between text-xs text-slate-300">
+            <div class="flex items-center space-x-1.5 font-bold">
+              <i data-lucide="layout-grid" class="w-3.5 h-3.5 text-amber-400"></i>
+              <span>Thumbnails</span>
+            </div>
+            <button id="viewer-btn-close-thumbnails" class="text-slate-500 hover:text-slate-300 p-0.5 rounded transition">
+              <i data-lucide="x" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+          <div id="viewer-thumbnail-list" class="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
+            <div class="text-xs text-slate-500 text-center py-6">Scan documents to view thumbnails</div>
+          </div>
+        </aside>
+
+        <!-- Live Document Scroll Area -->
+        <div id="live-viewer-scroll-container" class="flex-1 overflow-y-auto custom-scrollbar p-6 flex flex-col items-center">
+        
+        <!-- Empty State (Shown before scan) -->
+        <div id="live-viewer-empty" class="my-auto text-center max-w-md p-8 rounded-2xl border border-slate-800 bg-slate-800/40 text-slate-400 space-y-3 shadow-xl">
+          <div class="w-14 h-14 mx-auto rounded-2xl bg-slate-800 text-slate-400 flex items-center justify-center">
+            <i data-lucide="file-search" class="w-7 h-7 stroke-[1.8] text-sky-400"></i>
+          </div>
+          <h3 class="text-sm font-semibold text-slate-200">No Document Scanned Yet</h3>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            Paste your visitor list on the left, upload your PDF letters, and click <strong>"Scan PDFs & Highlight Visitors"</strong>.<br>
+            All highlighted document pages will appear right here with instant scrolling.
+          </p>
+        </div>
+
+        <!-- Rendered Pages Container (Injected here after scan) -->
+        <div id="live-viewer-content" class="w-full flex flex-col items-center space-y-8 hidden">
+          <!-- Page cards will be appended here -->
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  </div>
+
+  <!-- Hidden elements for backward compatibility -->
+  <div class="hidden">
+    <button id="btn-preview-all-modal"></button>
+    <button id="btn-quick-preview-all"></button>
+    <canvas id="preview-canvas"></canvas>
+    <div id="preview-empty"></div>
+    <div id="preview-page-controls"></div>
+    <span id="preview-page-label"></span>
+    <button id="btn-prev-page"></button>
+    <button id="btn-next-page"></button>
+  </div>
+
+  <!-- Security Toast Alert -->
+  <div id="security-toast" class="fixed bottom-5 right-5 bg-slate-900/95 border border-slate-700 text-slate-200 px-4 py-2.5 rounded-xl shadow-2xl text-xs z-50 flex items-center space-x-2 transition-all duration-300 opacity-0 pointer-events-none backdrop-blur-md">
+    <i data-lucide="shield-alert" class="w-4 h-4 text-amber-400"></i>
+    <span id="security-toast-text">Security notification</span>
+  </div>
+
+  <!-- App Script -->
+  <script src="app.min.js"></script>
+</body>
+</html>

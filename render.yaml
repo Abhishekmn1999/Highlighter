@@ -1,0 +1,14 @@
+services:
+  # Static Site: 100% Free Forever, Never Sleeps, Zero Cold Starts
+  - type: web
+    name: tifr-visitor-highlighter
+    env: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: .
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
