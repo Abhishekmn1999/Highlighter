@@ -15,6 +15,11 @@ app.use((req, res, next) => {
 // Serve static assets from project root
 app.use(express.static(path.join(__dirname)));
 
+// Settings Page Route
+app.get('/settings', (req, res) => {
+  res.sendFile(path.join(__dirname, 'settings.html'));
+});
+
 // Fallback to index.html
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));

@@ -7,3 +7,6 @@ run_web_app.bat
 serve.py
 colab_*.py
 generate_samples.js
+app.js
+build_obfuscate.js
+samples/
