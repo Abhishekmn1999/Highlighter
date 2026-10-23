@@ -52,6 +52,10 @@
     .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
     .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
     .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .viewer-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+    .viewer-scrollbar::-webkit-scrollbar-track { background: #0b1120; }
+    .viewer-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    .viewer-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
   </style>
 </head>
 <body class="bg-slate-100 text-slate-800 h-screen flex flex-col overflow-hidden">
@@ -323,8 +327,8 @@
               </button>
             </div>
 
-            <button id="viewer-btn-fit-width" class="hidden sm:block px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-medium transition" title="Reset to 100% original page size">
-              100%
+            <button id="viewer-btn-fit-width" class="hidden sm:block px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition" title="Fit document page to container width">
+              Fit Width
             </button>
 
             <button id="viewer-btn-print" class="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium flex items-center space-x-1 transition" title="Print document">
@@ -355,13 +359,13 @@
               <i data-lucide="x" class="w-3.5 h-3.5"></i>
             </button>
           </div>
-          <div id="viewer-thumbnail-list" class="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
+          <div id="viewer-thumbnail-list" class="flex-1 overflow-y-auto viewer-scrollbar p-3 space-y-3">
             <div class="text-xs text-slate-500 text-center py-6">Scan documents to view thumbnails</div>
           </div>
         </aside>
 
         <!-- Live Document Scroll Area -->
-        <div id="live-viewer-scroll-container" class="flex-1 overflow-y-auto custom-scrollbar p-3 sm:p-6 flex flex-col items-center">
+        <div id="live-viewer-scroll-container" class="flex-1 overflow-y-auto viewer-scrollbar p-2 sm:p-4 flex flex-col items-center">
         
           <!-- Empty State (Shown before scan) -->
           <div id="live-viewer-empty" class="my-auto text-center max-w-md p-6 sm:p-8 rounded-2xl border border-slate-800 bg-slate-800/40 text-slate-400 space-y-3 shadow-xl">
@@ -376,7 +380,7 @@
           </div>
 
           <!-- Rendered Pages Container (Injected here after scan) -->
-          <div id="live-viewer-content" class="w-full flex flex-col items-center space-y-6 sm:space-y-8 hidden">
+          <div id="live-viewer-content" class="w-full flex flex-col items-center space-y-4 sm:space-y-6 hidden">
             <!-- Page cards will be appended here -->
           </div>
 
@@ -416,6 +420,6 @@
   </div>
 
   <!-- App Script with cache-busting version parameter -->
-  <script src="app.min.js?v=2.2.0"></script>
+  <script src="app.min.js?v=2.3.0"></script>
 </body>
 </html>
