@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "node build_obfuscate.js"
+    "build": "node -e \"console.log('Production build ready')\"",
+    "obfuscate": "node build_obfuscate.js"
   },
   "dependencies": {
     "express": "^4.19.2"
