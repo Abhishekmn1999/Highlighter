@@ -56,6 +56,47 @@
     .viewer-scrollbar::-webkit-scrollbar-track { background: #0b1120; }
     .viewer-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
     .viewer-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+    @keyframes visitorPopGlow {
+      0% {
+        transform: scale(0.98);
+        box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7);
+      }
+      40% {
+        transform: scale(1.018);
+        box-shadow: 0 0 35px 8px rgba(56, 189, 248, 0.65), 0 0 0 4px rgba(56, 189, 248, 0.9);
+      }
+      100% {
+        transform: scale(1);
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+      }
+    }
+    .viewer-card-active-glow {
+      animation: visitorPopGlow 1.25s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    @media print {
+      body { background: white !important; height: auto !important; overflow: visible !important; }
+      header, #panel-left-sidebar, #split-resizer, #viewer-thumbnail-sidebar, #viewer-top-bar, #tab-mobile-inputs, #tab-mobile-viewer, button, #security-toast {
+        display: none !important;
+      }
+      #panel-main-viewer, #live-viewer-scroll-container, #live-viewer-content {
+        overflow: visible !important;
+        position: static !important;
+        width: 100% !important;
+        height: auto !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+      .viewer-page-card {
+        box-shadow: none !important;
+        border: none !important;
+        page-break-after: always !important;
+        break-after: page !important;
+        width: 100% !important;
+        margin: 0 0 20px 0 !important;
+      }
+    }
   </style>
 </head>
 <body class="bg-slate-100 text-slate-800 h-screen flex flex-col overflow-hidden">
@@ -292,10 +333,10 @@
               Awaiting scan
             </span>
 
-            <!-- Thumbnails Toggle Button -->
-            <button id="viewer-btn-toggle-thumbnails" class="px-2 py-1 text-xs font-semibold rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 transition flex items-center space-x-1 shadow-2xs whitespace-nowrap" title="Toggle Thumbnail Sidebar">
-              <i data-lucide="layout-grid" class="w-3.5 h-3.5 text-amber-400"></i>
-              <span class="hidden sm:inline">Thumbnails</span>
+            <!-- Visitors Directory Toggle Button -->
+            <button id="viewer-btn-toggle-thumbnails" class="px-2 py-1 text-xs font-semibold rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 transition flex items-center space-x-1 shadow-2xs whitespace-nowrap" title="Toggle Visitors Directory">
+              <i data-lucide="users" class="w-3.5 h-3.5 text-amber-400"></i>
+              <span class="hidden sm:inline">Visitors</span>
             </button>
           </div>
 
@@ -331,7 +372,7 @@
               Fit Width
             </button>
 
-            <button id="viewer-btn-print" class="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium flex items-center space-x-1 transition" title="Print document">
+            <button id="viewer-btn-print" class="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium flex items-center space-x-1 transition" title="Print document (Original Sanction Letter)">
               <i data-lucide="printer" class="w-3.5 h-3.5"></i>
               <span class="hidden sm:inline">Print</span>
             </button>
@@ -345,22 +386,25 @@
         </div>
       </div>
 
-      <!-- Viewer Body (Thumbnail Rail + Live Document Scroll Area) -->
+      <!-- Viewer Body (Visitors Directory Rail + Live Document Scroll Area) -->
       <div class="flex-1 flex overflow-hidden relative">
 
-        <!-- Collapsible Thumbnail Sidebar -->
-        <aside id="viewer-thumbnail-sidebar" class="w-60 bg-slate-950/95 border-r border-slate-800 flex flex-col shrink-0 transition-all duration-300 z-10 hidden shadow-xl">
+        <!-- Collapsible Visitors Directory Sidebar -->
+        <aside id="viewer-thumbnail-sidebar" class="w-64 sm:w-72 bg-slate-950/95 border-r border-slate-800 flex flex-col shrink-0 transition-all duration-300 z-10 hidden shadow-xl">
           <div class="p-3 border-b border-slate-800/80 flex items-center justify-between text-xs text-slate-300">
             <div class="flex items-center space-x-1.5 font-bold">
-              <i data-lucide="layout-grid" class="w-3.5 h-3.5 text-amber-400"></i>
-              <span>Thumbnails</span>
+              <i data-lucide="users" class="w-3.5 h-3.5 text-amber-400"></i>
+              <span>Visitors Directory</span>
             </div>
-            <button id="viewer-btn-close-thumbnails" class="text-slate-500 hover:text-slate-300 p-0.5 rounded transition">
+            <button id="viewer-btn-close-thumbnails" class="text-slate-500 hover:text-slate-300 p-0.5 rounded transition" title="Close Directory">
               <i data-lucide="x" class="w-3.5 h-3.5"></i>
             </button>
           </div>
-          <div id="viewer-thumbnail-list" class="flex-1 overflow-y-auto viewer-scrollbar p-3 space-y-3">
-            <div class="text-xs text-slate-500 text-center py-6">Scan documents to view thumbnails</div>
+          <div class="p-2 border-b border-slate-800/80 bg-slate-900/50">
+            <input type="text" id="viewer-visitor-search" placeholder="Search visitor name or #..." class="w-full bg-slate-950 border border-slate-800 text-slate-200 placeholder-slate-500 text-xs px-2.5 py-1.5 rounded-lg outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500">
+          </div>
+          <div id="viewer-thumbnail-list" class="flex-1 overflow-y-auto viewer-scrollbar p-2 space-y-1.5">
+            <div class="text-xs text-slate-500 text-center py-6">Scan documents to view visitors</div>
           </div>
         </aside>
 
@@ -419,7 +463,10 @@
     <span id="security-toast-text">Security notification</span>
   </div>
 
+  <!-- Isolated Print Iframe -->
+  <iframe id="tifr-print-iframe" class="hidden" style="display:none; position:fixed; width:0; height:0; border:none;"></iframe>
+
   <!-- App Script with cache-busting version parameter -->
-  <script src="app.min.js?v=2.6.0"></script>
+  <script src="app.min.js?v=2.7.0"></script>
 </body>
 </html>
