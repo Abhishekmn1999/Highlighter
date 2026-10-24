@@ -357,6 +357,12 @@
               <option value="">-- Jump to Visitor --</option>
             </select>
 
+            <!-- Add Highlight Manual Button -->
+            <button id="viewer-btn-manual-highlight" onclick="window.startManualHighlight()" class="px-2 sm:px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-semibold flex items-center space-x-1.5 transition shadow-xs" title="Manually add or edit highlight for any visitor">
+              <i data-lucide="highlighter" class="w-3.5 h-3.5 text-amber-400"></i>
+              <span class="hidden sm:inline">Add Highlight</span>
+            </button>
+
             <!-- Zoom Controls -->
             <div class="flex items-center bg-slate-800 border border-slate-700 rounded-lg p-0.5">
               <button id="viewer-btn-zoom-out" class="p-1 hover:bg-slate-700 rounded text-slate-300" title="Zoom Out">
@@ -385,6 +391,9 @@
 
         </div>
       </div>
+
+      <!-- Manual Highlight Notification Banner (Top of Viewer) -->
+      <div id="manual-highlight-banner" class="hidden"></div>
 
       <!-- Viewer Body (Visitors Directory Rail + Live Document Scroll Area) -->
       <div class="flex-1 flex overflow-hidden relative">
@@ -467,6 +476,6 @@
   <iframe id="tifr-print-iframe" class="hidden" style="display:none; position:fixed; width:0; height:0; border:none;"></iframe>
 
   <!-- App Script with cache-busting version parameter -->
-  <script src="app.min.js?v=3.2.0"></script>
+  <script src="app.min.js?v=3.3.0"></script>
 </body>
 </html>
