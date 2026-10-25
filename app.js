@@ -601,9 +601,12 @@ function findVisitorBoundary(words, visitor) {
       if (m) {
         const isSameLine = Math.abs((words[b].deskewedY ?? words[b].top) - (words[bestFirstTokIdx].deskewedY ?? words[bestFirstTokIdx].top)) <= 8;
         const isLeftMargin = words[b].left < 220;
-        if (isSameLine && isLeftMargin) {
+        const bulletNo = parseInt(m[1], 10);
+        const expectedNo = targetNo ? parseInt(targetNo, 10) : null;
+        // Accept bullet if: on same line as name, OR at left margin AND bullet number matches expected
+        if (isLeftMargin && (isSameLine || (expectedNo !== null && bulletNo === expectedNo))) {
           startIdx = b;
-          detectedPdfNo = parseInt(m[1], 10);
+          detectedPdfNo = bulletNo;
         }
         break;
       }
