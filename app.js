@@ -276,6 +276,13 @@ const CLOSING_PHRASES = [
   "registrar",
   "i am writing to request",
   "निवेदन",
+  "निवेदन है कि",
+  "उपरोक्त",
+  "विदेशी नागरिकों",
+  "हस्ताक्षर",
+  "भवदीय",
+  "यदि आपके कोई प्रश्न",
+  "परमाणु ऊर्जा विभाग",
   "request you to approve",
   "to approve the above",
   "please do not hesitate",
@@ -429,7 +436,7 @@ function partitionPageVisitorEntries(words) {
     if (!m) continue;
     const num = parseInt(m[1], 10);
     if (num < 1 || num > 60) continue;
-    if (words[i].left > 220) continue; // must be near left margin
+    if (words[i].left > 350) continue; // must be near left margin (tolerant up to 350px)
 
     if (isDateContext(words, i)) continue;
 
@@ -1506,6 +1513,7 @@ async function runHighlighter() {
   elements.statusPill.className = "text-xs px-2.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-800 animate-pulse";
 
   clearLogs();
+  appendLog(`🚀 TIFR Highlighter Engine v3.4.0 (Zero-Merge List-Partitioning Active)`, "success");
   appendLog(`Starting scan for ${state.visitors.length} visitors across ${state.uploadedFiles.length} file(s)...`);
 
   try {

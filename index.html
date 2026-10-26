@@ -110,7 +110,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-xs sm:text-base font-bold text-slate-900 leading-tight">TIFR Visitor Highlighter</h1>
-          <span class="hidden sm:inline-block px-2 py-0.5 text-[11px] font-semibold bg-sky-100 text-sky-800 rounded-full">Pro Clean</span>
+          <span class="px-2 py-0.5 text-[10px] sm:text-[11px] font-extrabold bg-emerald-500 text-slate-950 rounded-full shadow-2xs">v3.4.0 List-Engine</span>
           <span id="status-pill" class="text-[10px] sm:text-[11px] px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-600">
             Ready
           </span>
@@ -475,7 +475,7 @@
   <!-- Isolated Print Iframe -->
   <iframe id="tifr-print-iframe" class="hidden" style="display:none; position:fixed; width:0; height:0; border:none;"></iframe>
 
-  <!-- App Script with cache-busting version parameter -->
-  <script src="app.min.js?v=3.4.0"></script>
+  <!-- App Script: Using distinct filename to force fresh reload on both local file:/// and Render -->
+  <script src="app.v340.js"></script>
 </body>
 </html>
