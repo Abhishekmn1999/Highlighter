@@ -111,6 +111,12 @@ function normalize(text) {
   return text
     .replace(/[\u00e6\u00c6]/g, "ae")
     .replace(/[\u0153\u0152]/g, "oe")
+    .replace(/[üÜ]/g, "u")
+    .replace(/[öÖ]/g, "o")
+    .replace(/[çÇ]/g, "c")
+    .replace(/[ğĞ]/g, "g")
+    .replace(/[ıİ]/g, "i")
+    .replace(/[şŞ]/g, "s")
     .replace(/\uFB01/g, "fi")
     .replace(/\uFB02/g, "fl")
     .replace(/\uFB00/g, "ff")
@@ -391,6 +397,14 @@ function editDistance(a, b) {
   return row[b.length];
 }
 
+function tokenSimilarity(a, b) {
+  if (a === b) return 1.0;
+  if (!a || !b) return 0.0;
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1.0;
+  return (maxLen - editDistance(a, b)) / maxLen;
+}
+
 function isFuzzyTokenMatch(token, target) {
   if (!token || !target) return false;
   if (token === target) return true;
@@ -400,7 +414,10 @@ function isFuzzyTokenMatch(token, target) {
   if (simA === simB) return true;
   if (target.length >= 4 && token.length >= 6 && (token.startsWith(target) || target.startsWith(token)) &&
       Math.min(token.length, target.length) / Math.max(token.length, target.length) >= 0.85) return true;
-  if (target.length >= 5 && Math.abs(token.length - target.length) <= 1) {
+  if (target.length >= 4 && token.length >= 3) {
+    if (tokenSimilarity(token, target) >= 0.70) return true;
+  }
+  if (target.length >= 3 && Math.abs(token.length - target.length) <= 1) {
     return editDistance(token, target) <= 1;
   }
   return false;
@@ -441,7 +458,7 @@ function partitionPageVisitorEntries(words) {
     if (!m) continue;
     const num = parseInt(m[1], 10);
     if (num < 1 || num > 60) continue;
-    if (words[i].left > 350) continue; // must be near left margin (tolerant up to 350px)
+    if (words[i].left > 520) continue; // must be near left margin (tolerant up to 520px for scans/skew)
 
     if (isDateContext(words, i)) continue;
 
@@ -610,8 +627,7 @@ function findVisitorBoundary(words, visitor) {
       };
     }
 
-    // Numbered document where this visitor is not on this page
-    return null;
+    // Strategy 1 did not find visitor, fall through to Strategy 2
   }
 
   // ── Strategy 2: Sliding-Window Fallback for Unnumbered Documents ──
@@ -1335,18 +1351,30 @@ async function extractWordsFromPage(page, viewport, canvas, ocrMode = "auto") {
     }
   }
 
-  // If digital extraction yielded fewer than 8 words (e.g. only a scanner stamp or page number)
-  // and we're not locked in "digital only" mode, run high-speed OCR on the page
-  const needsOcr = words.length < 8 && ocrMode !== "digital";
+  // Check if digital text contains actual visitor records or is an incomplete/scanner header
+  let hasVisitorContent = false;
+  if (words.length > 0 && state.visitors && state.visitors.length > 0) {
+    const pageTextNorm = words.map(w => w.norm).join(" ");
+    hasVisitorContent = state.visitors.some(v => {
+      const parts = cleanVisitorNameParts(v.name);
+      return parts.length >= 2 && parts.some(p => p.length >= 4 && pageTextNorm.includes(p));
+    });
+  }
+
+  // If digital extraction yielded fewer than 8 words OR failed to locate any visitor records on the page
+  const needsOcr = (words.length < 8 || (!hasVisitorContent && ocrMode !== "digital")) && ocrMode !== "digital";
 
   if (needsOcr) {
+    if (words.length > 0 && !hasVisitorContent) {
+      appendLog("Digital text layer appears incomplete (visitors not detected in text layer). Engaging Tesseract OCR...", "ocr");
+    }
     if (typeof Tesseract === "undefined") {
       appendLog("Tesseract.js is not loaded. Cannot run OCR on scanned document.", "error");
     } else {
       appendLog("📄 Scanned page detected! Running high-speed Tesseract OCR...", "ocr");
 
       try {
-        const maxDim = 900;
+        const maxDim = 1800;
         const ocrScale = Math.min(1.0, maxDim / Math.max(canvas.width, canvas.height));
         const ocrCanvas = document.createElement("canvas");
         ocrCanvas.width = Math.round(canvas.width * ocrScale);
@@ -1374,7 +1402,7 @@ async function extractWordsFromPage(page, viewport, canvas, ocrMode = "auto") {
         const ocrWords = ocrResult?.data?.words || [];
         const extractedOcrWords = [];
         for (const w of ocrWords) {
-          if (!w.text || !w.text.trim() || w.confidence < 25) continue;
+          if (!w.text || !w.text.trim() || w.confidence < 15) continue;
           extractedOcrWords.push({
             raw: w.text.trim(),
             norm: normalize(w.text),
