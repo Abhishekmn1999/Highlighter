@@ -293,7 +293,12 @@ const CLOSING_PHRASES = [
 
 function isClosingParagraph(words, idx) {
   if (!words || !words[idx]) return false;
-  const rawLower = normalize(words[idx].raw);
+  // A date token is NEVER closing text (protects wrapped date lines like "26/09/2026.")
+  const raw = words[idx].raw;
+  if (/\d{1,2}[./-]\d{1,2}[./-]\d{2,4}/.test(raw)) {
+    return false;
+  }
+  const rawLower = normalize(raw);
   // Immediate single-token footer markers
   if (rawLower.includes("telephone") || rawLower.includes("टेलीफ़ोन") ||
       rawLower.includes("website") || rawLower.includes("वेबसाइट") ||
@@ -573,6 +578,22 @@ function findVisitorBoundary(words, visitor) {
       // Bonus if bullet number matches targetNo
       if (score > 0 && targetNoInt === entry.num) {
         score += 3;
+      }
+
+      // Cross-document verification: check country/institution details if present
+      if (score > 0 && visitor.details) {
+        const detailWords = visitor.details
+          .split(/[\s,;:.()]+/)
+          .map(w => alphaOnly(w))
+          .filter(w => w.length >= 4);
+        const stopWords = new Set(["from", "university", "institute", "center", "centre", "school", "physics", "department", "complex", "systems"]);
+        const keyDetails = detailWords.filter(w => !stopWords.has(w));
+        if (keyDetails.length > 0) {
+          const hasDetail = keyDetails.some(kw => windowHasPart(entryWords, kw));
+          if (hasDetail) {
+            score += 4;
+          }
+        }
       }
 
       if (score > bestScore) {
@@ -1061,36 +1082,66 @@ function drawHighlight(ctx, lines, hexColor, padX = 6, padY = 4, radius = 6, opa
   }
 }
 
+function formatVisitorDisplayName(name) {
+  if (!name) return "";
+  // Keeps exact word order from Sheet/input; strips commas and collapses multiple spaces
+  const cleaned = name.replace(/,/g, " ").trim();
+  return cleaned.replace(/\s+/g, " ");
+}
+
+function safeFilename(str) {
+  if (!str) return "Visitor";
+  const cleaned = formatVisitorDisplayName(str).replace(/[\\/*?:"<>|]/g, "").trim();
+  return cleaned || "Visitor";
+}
+
 function parseVisitorLine(text, sheetIdx) {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
+  let no = "";
+  let name = "";
+  let details = "";
+
   // 1. Primary: Match up to " from " (supports names containing commas)
-  let m = trimmed.match(/^(\d+)[\.\)]\s*(.+?)\s+from\s+/i);
-  if (!m) {
-    // 2. Secondary: If no " from ", match up to parenthesis or end
-    m = trimmed.match(/^(\d+)[\.\)]\s*(.+?)(?:\s*\(|$)/);
-  }
-  if (!m) {
-    m = trimmed.match(/^(\d+)[\.\)]\s*(.+)/);
-  }
-
+  let m = trimmed.match(/^(\d+)[\.\)]\s*(.+?)\s+from\s+(.+)$/i);
   if (m) {
-    let name = m[2].trim();
-    name = name.replace(/\s*\((retired|ret|retd)[^)]*$/i, "").trim();
-    return {
-      uid: `v_${sheetIdx}`,
-      no: m[1],
-      name: name,
-      text: trimmed,
-      sheet_idx: sheetIdx
-    };
+    no = m[1];
+    name = m[2].trim();
+    details = m[3].trim();
+  } else {
+    // 2. Secondary: If no " from ", match up to parenthesis or end
+    let m2 = trimmed.match(/^(\d+)[\.\)]\s*(.+?)(?:\s*\(|$)/);
+    if (m2) {
+      no = m2[1];
+      name = m2[2].trim();
+    } else {
+      let m3 = trimmed.match(/^(\d+)[\.\)]\s*(.+)/);
+      if (m3) {
+        no = m3[1];
+        name = m3[2].trim();
+      } else {
+        let m4 = trimmed.match(/^(.+?)\s+from\s+(.+)$/i);
+        if (m4) {
+          name = m4[1].trim();
+          details = m4[2].trim();
+        } else {
+          name = trimmed;
+        }
+      }
+    }
   }
-  return null;
-}
 
-function safeFilename(str) {
-  return str.replace(/[\\/*?:"<>|]/g, "-").trim();
+  name = name.replace(/\s*\((retired|ret|retd)[^)]*$/i, "").trim();
+
+  return {
+    uid: `v_${sheetIdx}`,
+    no: no,
+    name: name,
+    details: details,
+    text: trimmed,
+    sheet_idx: sheetIdx
+  };
 }
 
 // ── Event Handlers & State Updates ──────────────────────────────
@@ -1513,7 +1564,7 @@ async function runHighlighter() {
   elements.statusPill.className = "text-xs px-2.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-800 animate-pulse";
 
   clearLogs();
-  appendLog(`🚀 TIFR Highlighter Engine v3.4.0 (Zero-Merge List-Partitioning Active)`, "success");
+  appendLog(`🚀 TIFR Highlighter Engine v3.5.0 Pro (Master Combined & Exact Name Order Active)`, "success");
   appendLog(`Starting scan for ${state.visitors.length} visitors across ${state.uploadedFiles.length} file(s)...`);
 
   try {
@@ -3183,24 +3234,38 @@ window.downloadSinglePdf = async function(targetKey) {
 };
 
 elements.btnDownloadCombined.addEventListener("click", async () => {
-  showSecurityToast("Assembling combined individual approvals PDF...");
-  const bytes = await getOrBuildCombinedIndividualPdf();
-  if (!bytes) return;
+  showSecurityToast("Building combined PDF with ALL visitors highlighted...");
+  const bytes = await getOrBuildCombinedMasterPdf();
+  if (!bytes) {
+    appendLog("Combined PDF not available. Please ensure documents are scanned first.", "warn");
+    return;
+  }
   const blob = new Blob([bytes], { type: "application/pdf" });
-  triggerBlobDownload(blob, "TIFR_All_Visitors_Individual_Combined.pdf");
+  triggerBlobDownload(blob, "TIFR_All_Visitors_Combined.pdf");
 });
 
 const btnDownloadMasterEl = document.getElementById("btn-download-master");
 if (btnDownloadMasterEl) {
   btnDownloadMasterEl.addEventListener("click", async () => {
-    showSecurityToast("Building master overview PDF...");
+    showSecurityToast("Building master PDF with all visitors highlighted...");
     const bytes = await getOrBuildCombinedMasterPdf();
     if (!bytes) {
       appendLog("Master overview PDF not available.", "warn");
       return;
     }
     const blob = new Blob([bytes], { type: "application/pdf" });
-    triggerBlobDownload(blob, "TIFR_All_Visitors_Master_Overview.pdf");
+    triggerBlobDownload(blob, "TIFR_All_Visitors_Combined.pdf");
+  });
+}
+
+const btnDownloadIndCombinedEl = document.getElementById("btn-download-individual-combined");
+if (btnDownloadIndCombinedEl) {
+  btnDownloadIndCombinedEl.addEventListener("click", async () => {
+    showSecurityToast("Assembling combined individual approvals PDF...");
+    const bytes = await getOrBuildCombinedIndividualPdf();
+    if (!bytes) return;
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    triggerBlobDownload(blob, "TIFR_All_Visitors_Individual_Combined.pdf");
   });
 }
 

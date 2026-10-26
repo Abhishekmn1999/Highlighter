@@ -110,7 +110,7 @@
       <div>
         <div class="flex items-center space-x-2">
           <h1 class="text-xs sm:text-base font-bold text-slate-900 leading-tight">TIFR Visitor Highlighter</h1>
-          <span class="px-2 py-0.5 text-[10px] sm:text-[11px] font-extrabold bg-emerald-500 text-slate-950 rounded-full shadow-2xs">v3.4.0 List-Engine</span>
+          <span class="px-2 py-0.5 text-[10px] sm:text-[11px] font-extrabold bg-emerald-500 text-slate-950 rounded-full shadow-2xs">v3.5.0 Pro</span>
           <span id="status-pill" class="text-[10px] sm:text-[11px] px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-600">
             Ready
           </span>
@@ -129,17 +129,17 @@
 
       <!-- Prominent Download Buttons (Active when processed) -->
       <div id="download-actions" class="hidden flex items-center space-x-1.5">
-        <button id="btn-download-combined" class="px-2.5 sm:px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-xs shadow-xs transition flex items-center space-x-1.5" title="Download all individual visitor approval letters combined in sheet order">
+        <button id="btn-download-combined" class="px-2.5 sm:px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-xs shadow-xs transition flex items-center space-x-1.5" title="Download master PDF with ALL visitors highlighted together in one document">
           <i data-lucide="file-check" class="w-3.5 h-3.5"></i>
           <span><span class="hidden md:inline">Download </span>Combined PDF</span>
         </button>
-        <button id="btn-download-master" class="hidden md:flex px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg font-medium text-xs shadow-xs transition items-center space-x-1.5" title="Download master letter with all visitors highlighted together">
-          <i data-lucide="layers" class="w-3.5 h-3.5 text-slate-300"></i>
-          <span>Master Overview</span>
-        </button>
-        <button id="btn-download-zip" class="px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-semibold text-xs shadow-xs transition flex items-center space-x-1.5" title="Download ZIP containing separate PDF for each visitor">
+        <button id="btn-download-zip" class="px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-semibold text-xs shadow-xs transition flex items-center space-x-1.5" title="Download ZIP containing separate individual PDF for each visitor">
           <i data-lucide="archive" class="w-3.5 h-3.5"></i>
-          <span>ZIP</span>
+          <span>ZIP (Individual PDFs)</span>
+        </button>
+        <button id="btn-download-individual-combined" class="hidden xl:flex px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium text-xs shadow-2xs border border-slate-200 transition items-center space-x-1.5" title="Download all individual single-visitor letters merged together">
+          <i data-lucide="layers" class="w-3.5 h-3.5 text-slate-500"></i>
+          <span>Individual Merged</span>
         </button>
       </div>
     </div>
@@ -476,6 +476,6 @@
   <iframe id="tifr-print-iframe" class="hidden" style="display:none; position:fixed; width:0; height:0; border:none;"></iframe>
 
   <!-- App Script: Using distinct filename to force fresh reload on both local file:/// and Render -->
-  <script src="app.v340.js"></script>
+  <script src="app.v350.js"></script>
 </body>
 </html>
