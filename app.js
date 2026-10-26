@@ -419,6 +419,100 @@ function windowHasPart(windowWords, part) {
   return false;
 }
 
+function partitionPageVisitorEntries(words) {
+  if (!words || words.length === 0) return [];
+
+  const bulletCandidates = [];
+  for (let i = 0; i < words.length; i++) {
+    const raw = words[i].raw.trim();
+    const m = raw.match(/^[\(\[]?(\d+)[.)\]]?$/);
+    if (!m) continue;
+    const num = parseInt(m[1], 10);
+    if (num < 1 || num > 60) continue;
+    if (words[i].left > 220) continue; // must be near left margin
+
+    if (isDateContext(words, i)) continue;
+
+    // Reject obvious section headers like "1. The visitors' details..."
+    if (i + 1 < words.length) {
+      const nextWord = normalize(words[i + 1].raw);
+      if (['the', 'details', 'following', 'approval', 'sanction', 'purpose', 'subject', 'ref', 'dated', 'below', 'foreign', 'nationals'].includes(nextWord)) {
+        continue;
+      }
+    }
+
+    // Reject Annexure numbering like "(Annexure I)"
+    if (i > 0 && /annexure|ref|dated/i.test(words[i - 1].raw)) continue;
+    if (i > 1 && /annexure|ref|dated/i.test(words[i - 2].raw)) continue;
+
+    bulletCandidates.push({ wordIdx: i, num: num, top: (words[i].deskewedY ?? words[i].top) });
+  }
+
+  if (bulletCandidates.length === 0) return [];
+
+  const entries = [];
+  for (let b = 0; b < bulletCandidates.length; b++) {
+    const curr = bulletCandidates[b];
+    const next = bulletCandidates[b + 1];
+    let startIdx = curr.wordIdx;
+
+    if (startIdx > 0 && /^[(\[#]$/.test(words[startIdx - 1].raw.trim())) {
+      startIdx--;
+    }
+
+    let endIdx = words.length;
+
+    if (next) {
+      endIdx = next.wordIdx;
+    } else {
+      // Last entry on the page: find closing paragraph or end after dates
+      let closingIdx = words.length;
+      for (let k = startIdx + 1; k < words.length; k++) {
+        if (isClosingParagraph(words, k)) {
+          closingIdx = k;
+          break;
+        }
+      }
+
+      let dateEndIdx = words.length;
+      let lastDateIdx = -1;
+      for (let k = startIdx + 1; k < closingIdx; k++) {
+        if (isDateToken(words[k].raw, words, k)) {
+          lastDateIdx = k;
+        }
+      }
+      if (lastDateIdx !== -1) {
+        let stopAt = lastDateIdx + 1;
+        while (stopAt < closingIdx && /^[.,;]$/.test(words[stopAt].raw.trim())) {
+          stopAt++;
+        }
+        if (stopAt < closingIdx && /^\(?(oci|pio)\)?[.,;]?$/i.test(words[stopAt].raw.trim())) {
+          stopAt++;
+        }
+        while (stopAt < closingIdx && /^[.,;]$/.test(words[stopAt].raw.trim())) {
+          stopAt++;
+        }
+        dateEndIdx = stopAt;
+      }
+
+      endIdx = Math.min(closingIdx, dateEndIdx);
+    }
+
+    const entryWords = words.slice(startIdx, endIdx);
+    const entryText = entryWords.map(w => w.raw).join(' ');
+    entries.push({
+      num: curr.num,
+      start: startIdx,
+      end: endIdx,
+      words: entryWords,
+      text: entryText,
+      normText: normalize(entryText)
+    });
+  }
+
+  return entries;
+}
+
 function findVisitorBoundary(words, visitor) {
   const parts = cleanVisitorNameParts(visitor.name);
   if (!parts.length) return null;
@@ -427,7 +521,72 @@ function findVisitorBoundary(words, visitor) {
   const last = parts[parts.length - 1];
   const allParts = parts.filter(p => p.length >= 2);
   const targetNo = String(visitor.no);
+  const targetNoInt = parseInt(targetNo, 10);
 
+  // ── Strategy 1: Disjoint Numbered List Partitioning (Zero-Merge Guarantee) ──
+  const partitions = partitionPageVisitorEntries(words);
+  if (partitions.length > 0) {
+    let bestEntry = null;
+    let bestScore = 0;
+
+    for (const entry of partitions) {
+      let score = 0;
+      const entryWords = entry.words;
+
+      const hasFirst = first && windowHasPart(entryWords, first);
+      const hasLast = last && windowHasPart(entryWords, last);
+      const matchingPartsCount = allParts.filter(p => windowHasPart(entryWords, p)).length;
+
+      // 1. Both first and last name present
+      if (hasFirst && hasLast) {
+        score = 12;
+      }
+      // 2. Initial + Last name (e.g. "P. Chandra")
+      else if (hasLast && last.length >= 4) {
+        const initial = first[0];
+        const hasInitial = entryWords.some(w => {
+          const a = alphaOnly(w.raw);
+          return a === initial && w.raw.length <= 2;
+        });
+        if (hasInitial) {
+          score = 10;
+        } else if (matchingPartsCount >= 1) {
+          score = 10;
+        }
+      }
+      // 3. At least 2 significant name parts present
+      else if (matchingPartsCount >= 2) {
+        score = 9;
+      }
+      // 4. Single-word name (mononym)
+      else if (parts.length === 1 && hasFirst) {
+        score = 9;
+      }
+
+      // Bonus if bullet number matches targetNo
+      if (score > 0 && targetNoInt === entry.num) {
+        score += 3;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestEntry = entry;
+      }
+    }
+
+    if (bestEntry && bestScore >= 8) {
+      return {
+        start: bestEntry.start,
+        end: bestEntry.end,
+        detectedPdfNo: bestEntry.num
+      };
+    }
+
+    // Numbered document where this visitor is not on this page
+    return null;
+  }
+
+  // ── Strategy 2: Sliding-Window Fallback for Unnumbered Documents ──
   let bestStart = -1;
   let bestScore = 0;
   let bestFirstTokIdx = -1;
@@ -468,7 +627,6 @@ function findVisitorBoundary(words, visitor) {
     }
     if (insideAccompanying) continue;
 
-    // Evaluate window centered around i: [i - 4, i + 20], excluding tokens in accompanying clauses
     const winStart = Math.max(0, i - 4);
     const winEnd = Math.min(words.length, i + 20);
     const windowWords = [];
@@ -480,32 +638,21 @@ function findVisitorBoundary(words, visitor) {
       if (w.raw.includes(")")) inAcc = false;
     }
 
-    // Check if target number is present in window (excluding date tokens)
     const hasTargetNum = windowWords.some((w, wI) => isNumberToken(w.raw, targetNo, words, winStart + wI));
     const hasFirst = windowHasPart(windowWords, first);
     const hasLast = windowHasPart(windowWords, last);
     const matchingPartsCount = allParts.filter(p => windowHasPart(windowWords, p)).length;
 
     let score = 0;
-
-    // 1. Both first and last name present
     if (hasFirst && hasLast) {
       score = hasTargetNum ? 12 : 10;
-    }
-    // 2. Target number + Last name (handles "23. P. Chandra", "20. S. Raghu", "27. Dr. Vojta")
-    else if (hasTargetNum && hasLast && last.length >= 4) {
+    } else if (hasTargetNum && hasLast && last.length >= 4) {
       score = 11;
-    }
-    // 3. Target number + First name (handles full first names >= 5 chars like "8. Francesco")
-    else if (hasTargetNum && hasFirst && first.length >= 5) {
+    } else if (hasTargetNum && hasFirst && first.length >= 5) {
       score = 11;
-    }
-    // 4. Target number + at least 1 significant name part present
-    else if (hasTargetNum && matchingPartsCount >= 1) {
+    } else if (hasTargetNum && matchingPartsCount >= 1) {
       score = 10;
-    }
-    // 5. Initial + Last name (e.g. "P. Chandra" where first is "Premala")
-    else if (hasLast && last.length >= 4) {
+    } else if (hasLast && last.length >= 4) {
       const initial = first[0];
       const hasInitial = windowWords.some(w => {
         const a = alphaOnly(w.raw);
@@ -514,9 +661,7 @@ function findVisitorBoundary(words, visitor) {
       if (hasInitial) {
         score = hasTargetNum ? 11 : 9;
       }
-    }
-    // 6. At least 2 name parts present without target number
-    else if (matchingPartsCount >= 2) {
+    } else if (matchingPartsCount >= 2) {
       score = hasTargetNum ? 10 : 8;
     }
 
@@ -562,7 +707,6 @@ function findVisitorBoundary(words, visitor) {
   let startIdx = bestStart;
   let detectedPdfNo = null;
 
-  // 1. Look for targetNo backward up to 6 tokens
   let foundTargetNo = false;
   for (let b = bestStart; b >= Math.max(0, bestStart - 6); b--) {
     if (isNumberToken(words[b].raw, targetNo, words, b)) {
@@ -577,7 +721,6 @@ function findVisitorBoundary(words, visitor) {
     }
   }
 
-  // 2. Check if bestStart or immediate next token is targetNo
   if (!foundTargetNo) {
     if (isNumberToken(words[bestStart].raw, targetNo, words, bestStart)) {
       startIdx = bestStart;
@@ -590,8 +733,6 @@ function findVisitorBoundary(words, visitor) {
     }
   }
 
-  // 3. Fallback: if targetNo did not match (e.g. document numbering differs from Excel),
-  // look immediately before visitor's first name for ANY list bullet (e.g. "9." or "10.")
   if (!foundTargetNo && bestFirstTokIdx !== -1) {
     for (let b = bestFirstTokIdx - 1; b >= Math.max(0, bestFirstTokIdx - 4); b--) {
       const bRaw = words[b].raw.trim();
@@ -599,12 +740,10 @@ function findVisitorBoundary(words, visitor) {
       if (/^(dr|prof|mr|mrs|ms|shri|smt)\.?$/i.test(normalize(bRaw))) continue;
       const m = bRaw.match(/^[\(\[]?(\d+)[.)\]]?$/);
       if (m) {
-        const isSameLine = Math.abs((words[b].deskewedY ?? words[b].top) - (words[bestFirstTokIdx].deskewedY ?? words[bestFirstTokIdx].top)) <= 8;
+        const isSameLine = Math.abs((words[b].deskewedY ?? words[b].top) - (words[bestFirstTokIdx].deskewedY ?? words[bestFirstTokIdx].top)) <= 12;
         const isLeftMargin = words[b].left < 220;
         const bulletNo = parseInt(m[1], 10);
-        const expectedNo = targetNo ? parseInt(targetNo, 10) : null;
-        // Accept bullet if: on same line as name, OR at left margin AND bullet number matches expected
-        if (isLeftMargin && (isSameLine || (expectedNo !== null && bulletNo === expectedNo))) {
+        if (isLeftMargin || isSameLine) {
           startIdx = b;
           detectedPdfNo = bulletNo;
         }
@@ -618,27 +757,23 @@ function findVisitorBoundary(words, visitor) {
     startIdx--;
   }
 
-  // Determine end index
   let endIdx = words.length;
   let datesFound = 0;
 
   for (let j = startIdx + 1; j < words.length; j++) {
     const raw = words[j].raw.trim();
 
-    // 1. Closing Paragraph or Footer
     if (isClosingParagraph(words, j)) {
       endIdx = j;
       break;
     }
 
-    // 2. Explanatory Note / Remark without parenthesis
     const lookaheadSnippet = words.slice(j, Math.min(j + 4, words.length)).map(x => normalize(x.raw)).join(" ");
     if (/^(note|remark|remarks|please\s+note|the\s+above\s+(three|two|four|guests|visitors|family)|approval\s+for\s+prof)/i.test(lookaheadSnippet)) {
       endIdx = j;
       break;
     }
 
-    // 3. Next PDF number (e.g. "10." after "9.")
     if (detectedPdfNo !== null) {
       if (isNumberToken(raw, String(detectedPdfNo + 1), words, j) || (raw === String(detectedPdfNo + 1) + ".")) {
         const isStartOfLine = words[j].left < 220 && (
@@ -651,7 +786,6 @@ function findVisitorBoundary(words, visitor) {
       }
     }
 
-    // 4. Any list number on a new line after startIdx + 3
     if (j > startIdx + 3 && /^\d+[.):]$/.test(raw)) {
       const isStartOfLine = words[j].left < 220 && (
         (words[j].deskewedY ?? words[j].top) > (words[startIdx].deskewedY ?? words[startIdx].top) + 8
@@ -662,15 +796,13 @@ function findVisitorBoundary(words, visitor) {
       }
     }
 
-    // 5. Date completion: detect full or split dates
     const dateSpan = getDateSpan(words, j);
     if (dateSpan) {
       datesFound++;
-      j = dateSpan.end - 1; // advance to last token of date
+      j = dateSpan.end - 1;
 
       if (datesFound >= 2 || words[j].raw.endsWith(".") || words[j].raw.endsWith(";")) {
         let stopAt = j + 1;
-        // Guard: if the very next token is the next visitor's list bullet on a new line, stop here
         if (stopAt < words.length) {
           const nw = words[stopAt];
           const nRaw = nw.raw.trim();
@@ -681,7 +813,6 @@ function findVisitorBoundary(words, visitor) {
             break;
           }
         }
-        // Check if optional note follows: e.g. "(OCI)", "(OCI).", "(PIO)", "(Accompanying ...)"
         let lookaheadNote = "";
         for (let k = stopAt; k < Math.min(words.length, stopAt + 6); k++) {
           lookaheadNote += words[k].raw.trim();
@@ -1233,11 +1364,11 @@ async function extractWordsFromPage(page, viewport, canvas, ocrMode = "auto") {
     if (!isAlreadyOrdered) {
       // Re-sort using deskewed line clustering so tilted lines are never fractured
       const lines = [];
-      const tol = 8;
+      const tol = 12;
       for (const w of words) {
         let placed = false;
         for (const line of lines) {
-          const lineBase = line[0].deskewedY;
+          const lineBase = line.reduce((acc, cur) => acc + cur.deskewedY, 0) / line.length;
           if (Math.abs(lineBase - w.deskewedY) <= tol) {
             line.push(w);
             placed = true;
@@ -2401,8 +2532,26 @@ window.startManualHighlight = function(targetKey) {
     targetVisitor = visitors.find(v => v.uid === k || String(v.no) === k);
   }
   if (!targetVisitor) {
-    const foundUids = state.processedResults.foundVisitorUids;
-    targetVisitor = visitors.find(v => !foundUids.has(v.uid)) || visitors[0];
+    // Check if jump select has a currently selected visitor
+    const jumpSelect = document.getElementById("viewer-jump-select");
+    if (jumpSelect && jumpSelect.value && jumpSelect.value !== "all") {
+      const pageItem = livePagesList.find(p => p.id === jumpSelect.value);
+      if (pageItem && pageItem.visitorUid) {
+        targetVisitor = visitors.find(v => v.uid === pageItem.visitorUid);
+      }
+    }
+    // Check currently visible page item in viewer
+    if (!targetVisitor) {
+      const visibleItem = getCurrentVisiblePageItem();
+      if (visibleItem && visibleItem.visitorUid) {
+        targetVisitor = visitors.find(v => v.uid === visibleItem.visitorUid);
+      }
+    }
+    // Fall back to first missing visitor, then first visitor
+    if (!targetVisitor) {
+      const foundUids = state.processedResults.foundVisitorUids;
+      targetVisitor = visitors.find(v => !foundUids.has(v.uid)) || visitors[0];
+    }
   }
 
   state.manualHighlight.active = true;
@@ -2542,41 +2691,60 @@ window.applyManualHighlightAtPoint = function(pageItem, clickX, clickY, dragBox 
     }
   } else {
     if (words.length > 0) {
-      let closestWord = words[0];
-      let minDist = 999999;
-      for (const w of words) {
-        const yCenter = (w.top + w.bottom) / 2;
-        const d = Math.abs(clickY - yCenter);
-        if (d < minDist) {
-          minDist = d;
-          closestWord = w;
+      // Check if partitions exist on this page for instant precise entry snapping
+      const partitions = partitionPageVisitorEntries(words);
+      let matchedPartition = null;
+      for (const p of partitions) {
+        const pWords = p.words;
+        const minY = Math.min(...pWords.map(w => w.top));
+        const maxY = Math.max(...pWords.map(w => w.bottom));
+        if (clickY >= minY - 10 && clickY <= maxY + 10) {
+          matchedPartition = p;
+          break;
         }
       }
 
-      const targetDeskewY = closestWord.deskewedY !== undefined ? closestWord.deskewedY : closestWord.top;
-      const lineWords = words.filter(w => {
-        const base = w.deskewedY !== undefined ? w.deskewedY : w.top;
-        return Math.abs(base - targetDeskewY) <= 12;
-      });
-
-      if (lineWords.length > 0) {
-        const indices = lineWords.map(w => words.indexOf(w)).filter(i => i !== -1);
-        segmentStart = Math.min(...indices);
-        let endIdx = Math.max(...indices) + 1;
-        for (let j = endIdx; j < Math.min(words.length, endIdx + 20); j++) {
-          const raw = words[j].raw.trim();
-          if (/^\d+[.):]?$/.test(raw) && words[j].left < 200) break;
-          if (isDateToken(raw)) {
-            if (j + 1 < words.length && /^\((oci|pio)\)?[.,;]?$/i.test(words[j + 1].raw.trim())) {
-              endIdx = j + 2;
-            } else {
-              endIdx = j + 1;
-            }
-            break;
+      if (matchedPartition) {
+        segmentStart = matchedPartition.start;
+        segmentEnd = matchedPartition.end;
+        highlightLines = groupIntoLines(words.slice(segmentStart, segmentEnd));
+      } else {
+        let closestWord = words[0];
+        let minDist = 999999;
+        for (const w of words) {
+          const yCenter = (w.top + w.bottom) / 2;
+          const d = Math.abs(clickY - yCenter);
+          if (d < minDist) {
+            minDist = d;
+            closestWord = w;
           }
         }
-        segmentEnd = endIdx;
-        highlightLines = groupIntoLines(words.slice(segmentStart, segmentEnd));
+
+        const targetDeskewY = closestWord.deskewedY !== undefined ? closestWord.deskewedY : closestWord.top;
+        const lineWords = words.filter(w => {
+          const base = w.deskewedY !== undefined ? w.deskewedY : w.top;
+          return Math.abs(base - targetDeskewY) <= 12;
+        });
+
+        if (lineWords.length > 0) {
+          const indices = lineWords.map(w => words.indexOf(w)).filter(i => i !== -1);
+          segmentStart = Math.min(...indices);
+          let endIdx = Math.max(...indices) + 1;
+          for (let j = endIdx; j < Math.min(words.length, endIdx + 20); j++) {
+            const raw = words[j].raw.trim();
+            if (/^\d+[.):]?$/.test(raw) && words[j].left < 200) break;
+            if (isDateToken(raw, words, j)) {
+              if (j + 1 < words.length && /^\((oci|pio)\)?[.,;]?$/i.test(words[j + 1].raw.trim())) {
+                endIdx = j + 2;
+              } else {
+                endIdx = j + 1;
+              }
+              break;
+            }
+          }
+          segmentEnd = endIdx;
+          highlightLines = groupIntoLines(words.slice(segmentStart, segmentEnd));
+        }
       }
     }
 
