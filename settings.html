@@ -74,6 +74,52 @@
       </a>
     </div>
 
+    <!-- Section 0: Private Python Backend API (Colab Precision) -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+      <div class="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <div class="flex items-center space-x-3">
+          <div class="w-8 h-8 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center">
+            <i data-lucide="server" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h2 class="text-sm font-bold text-slate-900">Private Python Cloud Engine (Colab Precision)</h2>
+              <span class="px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-700 rounded-full">Recommended</span>
+            </div>
+            <p class="text-xs text-slate-500">Executes native Linux Poppler & Tesseract OCR at 300 DPI on your private Render backend</p>
+          </div>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" id="set-use-python-api" class="sr-only peer" checked>
+          <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+        </label>
+      </div>
+
+      <div class="p-5 sm:p-6 space-y-4">
+        <div>
+          <label for="set-python-api-url" class="block text-xs font-semibold text-slate-800 mb-1.5">Backend API Endpoint</label>
+          <div class="flex items-center space-x-2">
+            <input type="url" id="set-python-api-url" value="https://tifr-highlighter-api.onrender.com" class="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-medium text-slate-800 focus:bg-white focus:ring-2 focus:ring-sky-500 outline-none transition" placeholder="https://tifr-highlighter-api.onrender.com">
+            <button type="button" id="btn-test-api-conn" class="px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center space-x-1.5 shadow-2xs transition shrink-0">
+              <i data-lucide="radio" class="w-3.5 h-3.5 text-sky-600"></i>
+              <span>Test Connection</span>
+            </button>
+          </div>
+          <div id="api-conn-status" class="mt-2 text-[11px] text-slate-500 flex items-center space-x-1.5">
+            <span class="w-2 h-2 rounded-full bg-slate-400"></span>
+            <span>Default endpoint: <code>https://tifr-highlighter-api.onrender.com</code></span>
+          </div>
+        </div>
+
+        <div class="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 leading-relaxed flex items-start space-x-2.5">
+          <i data-lucide="shield-check" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
+          <div>
+            <strong>100% Code Privacy & Reliability:</strong> Your core Python scanning logic, regexes, and PDF rendering algorithms run securely inside your private Docker container on Render. The source code is completely hidden from browser inspection. If the server is ever offline or sleeping, the webapp automatically falls back to client-side OCR without interruptions.
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Section 1: OCR & Scanning Configuration -->
     <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
       <div class="p-5 border-b border-slate-100 flex items-center space-x-3 bg-slate-50/50">
@@ -276,6 +322,8 @@
 
     // Default configuration values
     const DEFAULTS = {
+      use_python_api: true,
+      python_api_url: "https://tifr-highlighter-api.onrender.com",
       ocr_mode: "auto",
       color: "#FFC101",
       pad_y: "4",
@@ -288,6 +336,10 @@
     };
 
     // DOM Elements
+    const elUsePythonApi = document.getElementById("set-use-python-api");
+    const elPythonApiUrl = document.getElementById("set-python-api-url");
+    const elBtnTestApiConn = document.getElementById("btn-test-api-conn");
+    const elApiConnStatus = document.getElementById("api-conn-status");
     const elOcrMode = document.getElementById("set-ocr-mode");
     const elColor = document.getElementById("set-highlight-color");
     const elColorHex = document.getElementById("set-color-hex");
@@ -308,6 +360,10 @@
 
     // Load saved settings or fallback to defaults
     function loadSettings() {
+      const usePy = localStorage.getItem("tifr_cfg_use_python_api");
+      elUsePythonApi.checked = usePy !== null ? usePy === "true" : DEFAULTS.use_python_api;
+      elPythonApiUrl.value = localStorage.getItem("tifr_cfg_python_api_url") || DEFAULTS.python_api_url;
+
       elOcrMode.value = localStorage.getItem("tifr_cfg_ocr_mode") || DEFAULTS.ocr_mode;
       const color = localStorage.getItem("tifr_cfg_color") || DEFAULTS.color;
       elColor.value = color;
@@ -376,6 +432,8 @@
 
     // Save settings to localStorage
     function saveSettings() {
+      localStorage.setItem("tifr_cfg_use_python_api", elUsePythonApi.checked ? "true" : "false");
+      localStorage.setItem("tifr_cfg_python_api_url", elPythonApiUrl.value.trim());
       localStorage.setItem("tifr_cfg_ocr_mode", elOcrMode.value);
       localStorage.setItem("tifr_cfg_color", elColor.value);
       localStorage.setItem("tifr_cfg_pad_y", elPadY.value);
@@ -395,6 +453,8 @@
     // Reset to defaults
     function resetDefaults() {
       if (confirm("Reset all settings to default values?")) {
+        elUsePythonApi.checked = DEFAULTS.use_python_api;
+        elPythonApiUrl.value = DEFAULTS.python_api_url;
         elOcrMode.value = DEFAULTS.ocr_mode;
         elColor.value = DEFAULTS.color;
         elColorHex.value = DEFAULTS.color;
@@ -414,6 +474,25 @@
         updateLivePreview();
         saveSettings();
       }
+    }
+
+    // Test API Connection
+    if (elBtnTestApiConn) {
+      elBtnTestApiConn.addEventListener("click", async () => {
+        const url = (elPythonApiUrl.value.trim() || DEFAULTS.python_api_url).replace(/\/+$/, "");
+        elApiConnStatus.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span><span class="text-amber-600 font-medium">Connecting to ${url}...</span>`;
+        try {
+          const resp = await fetch(url + "/", { method: "GET" });
+          if (resp.ok) {
+            const data = await resp.json();
+            elApiConnStatus.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span class="text-emerald-700 font-semibold">Online: ${data.service || "Python Engine"} (v${data.version || "1.0"})</span>`;
+          } else {
+            elApiConnStatus.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-500"></span><span class="text-rose-600 font-medium">HTTP ${resp.status} - Server responded with error</span>`;
+          }
+        } catch (err) {
+          elApiConnStatus.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-500"></span><span class="text-rose-600 font-medium">Cannot reach server: ${err.message}</span>`;
+        }
+      });
     }
 
     // Event Listeners

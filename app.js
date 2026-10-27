@@ -1639,6 +1639,238 @@ async function getOrBuildCombinedMasterPdf() {
   return bytes;
 }
 
+// ── Private Python Cloud Engine (300 DPI Poppler + Linux Tesseract) ──
+
+async function runPythonHighlighter(pythonApiUrl, highlightColor) {
+  const visitorText = elements.inputVisitors.value.trim();
+  if (!visitorText) return false;
+
+  const formData = new FormData();
+  formData.append("visitor_text", visitorText);
+  formData.append("highlight_color", highlightColor || "#FFC101");
+
+  for (const file of state.uploadedFiles) {
+    formData.append("files", file, file.name);
+  }
+
+  updateProgress(20, "Uploading PDFs to Private Python Cloud Engine...");
+  appendLog(`Sending ${state.uploadedFiles.length} PDF(s) to server...`, "ocr");
+
+  const abortCtrl = new AbortController();
+  const timeoutId = setTimeout(() => abortCtrl.abort(), 180000);
+
+  let response;
+  try {
+    updateProgress(35, "Server running native Linux Poppler + Tesseract OCR at 300 DPI...");
+    response = await fetch(`${pythonApiUrl}/api/highlight`, {
+      method: "POST",
+      body: formData,
+      signal: abortCtrl.signal
+    });
+  } catch (netErr) {
+    clearTimeout(timeoutId);
+    if (netErr.name === "AbortError") {
+      throw new Error("Server request timed out after 3 minutes");
+    }
+    throw new Error(`Connection failed (${netErr.message})`);
+  }
+  clearTimeout(timeoutId);
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "Unknown server error");
+    throw new Error(`Server returned HTTP ${response.status}: ${errorText}`);
+  }
+
+  updateProgress(75, "Receiving highlighted PDFs & processing results...");
+  const zipBlob = await response.blob();
+  appendLog(`📦 Received processed archive (${(zipBlob.size / 1024).toFixed(1)} KB) from server.`, "success");
+
+  // Read summary header
+  let summary = null;
+  const summaryHeader = response.headers.get("X-Processing-Summary");
+  if (summaryHeader) {
+    try {
+      summary = JSON.parse(summaryHeader);
+    } catch (e) {
+      console.warn("Could not parse X-Processing-Summary:", e);
+    }
+  }
+
+  // Unpack ZIP
+  updateProgress(85, "Extracting and rendering highlighted documents...");
+  const zip = await JSZip.loadAsync(zipBlob);
+
+  // 1. Get Master Combined PDF
+  let masterBytes = null;
+  const masterFile = zip.file("TIFR_All_Visitors_Combined.pdf");
+  if (masterFile) {
+    masterBytes = await masterFile.async("uint8array");
+    appendLog("✓ Master Combined PDF (TIFR_All_Visitors_Combined.pdf) extracted.", "success");
+  }
+
+  // 2. Get Individual PDFs
+  const individualPdfs = [];
+  const foundVisitorUids = new Set();
+  const foundVisitorNos = new Set();
+  const visitorFileMap = {};
+
+  // Map matched records from summary if present
+  if (summary && summary.matched_records) {
+    for (const rec of summary.matched_records) {
+      const v = state.visitors.find(vis =>
+        (vis.sheet_idx !== undefined && vis.sheet_idx === (rec.sheet_idx - 1)) ||
+        (String(vis.no) === String(rec.doc_no) && vis.name.toLowerCase().includes(rec.name.toLowerCase().slice(0, 5)))
+      ) || state.visitors[rec.sheet_idx - 1];
+
+      if (v) {
+        foundVisitorUids.add(v.uid);
+        foundVisitorNos.add(v.no);
+        visitorFileMap[v.uid] = {
+          pdfName: rec.pdf,
+          page: rec.page,
+          visitor: v
+        };
+        if (!visitorFileMap[v.no]) {
+          visitorFileMap[v.no] = visitorFileMap[v.uid];
+        }
+      }
+    }
+  }
+
+  // Extract each file inside zip
+  const zipEntries = Object.keys(zip.files);
+  for (const zipPath of zipEntries) {
+    if (zipPath.endsWith("/") || !zipPath.toLowerCase().endsWith(".pdf")) continue;
+    if (zipPath === "TIFR_All_Visitors_Combined.pdf") continue;
+
+    const fileObj = zip.files[zipPath];
+    const pdfBytes = await fileObj.async("uint8array");
+    const baseName = zipPath.split("/").pop();
+
+    let matchedVisitor = null;
+    const vNameInFile = baseName.replace(/^TIFR Approval -\s*/i, "").replace(/\.pdf$/i, "").trim();
+
+    for (const v of state.visitors) {
+      const vClean = safeFilename(formatVisitorDisplayName(v.name)).toLowerCase();
+      if (vClean === vNameInFile.toLowerCase()) {
+        matchedVisitor = v;
+        break;
+      }
+    }
+
+    if (!matchedVisitor) {
+      for (const v of state.visitors) {
+        const vClean = safeFilename(v.name).toLowerCase();
+        if (vNameInFile.toLowerCase().includes(vClean) || vClean.includes(vNameInFile.toLowerCase())) {
+          matchedVisitor = v;
+          break;
+        }
+      }
+    }
+
+    if (!matchedVisitor) {
+      for (const v of state.visitors) {
+        const tokens = v.name.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
+        if (tokens.some(t => vNameInFile.toLowerCase().includes(t))) {
+          matchedVisitor = v;
+          break;
+        }
+      }
+    }
+
+    if (matchedVisitor) {
+      foundVisitorUids.add(matchedVisitor.uid);
+      foundVisitorNos.add(matchedVisitor.no);
+      if (!visitorFileMap[matchedVisitor.uid]) {
+        visitorFileMap[matchedVisitor.uid] = {
+          pdfName: matchedVisitor.pdfName || "TIFR Document",
+          visitor: matchedVisitor
+        };
+      }
+    }
+
+    individualPdfs.push({
+      name: baseName,
+      pdfBytes: pdfBytes,
+      visitor: matchedVisitor || { name: vNameInFile, no: "1", uid: `v_ext_${individualPdfs.length}`, sheet_idx: individualPdfs.length },
+      canvases: []
+    });
+  }
+
+  // Sort individual PDFs by original spreadsheet order
+  individualPdfs.sort((a, b) => {
+    const sA = a.visitor?.sheet_idx !== undefined ? a.visitor.sheet_idx : 999;
+    const sB = b.visitor?.sheet_idx !== undefined ? b.visitor.sheet_idx : 999;
+    return sA - sB;
+  });
+
+  // Render preview canvases for the Live Document Viewer
+  updateProgress(90, "Rendering preview pages for Live Viewer...");
+  const combinedEntries = [];
+
+  if (masterBytes) {
+    try {
+      const masterDoc = await pdfjsLib.getDocument({ data: masterBytes }).promise;
+      const masterCanvases = [];
+      for (let p = 1; p <= masterDoc.numPages; p++) {
+        const page = await masterDoc.getPage(p);
+        const { canvas } = await renderPdfPageToCanvas(page, 1800);
+        masterCanvases.push(canvas);
+      }
+      combinedEntries.push({
+        minSheetIdx: 0,
+        canvases: masterCanvases,
+        rawCanvases: masterCanvases,
+        pageWordsList: [],
+        visitors: state.visitors.filter(v => foundVisitorUids.has(v.uid)),
+        visitorSegments: {},
+        pdfName: "Master Combined Document"
+      });
+    } catch (e) {
+      console.warn("Could not render master canvases:", e);
+    }
+  }
+
+  for (const item of individualPdfs) {
+    if (item.pdfBytes) {
+      try {
+        const indDoc = await pdfjsLib.getDocument({ data: item.pdfBytes }).promise;
+        const indCanvases = [];
+        for (let p = 1; p <= indDoc.numPages; p++) {
+          const page = await indDoc.getPage(p);
+          const { canvas } = await renderPdfPageToCanvas(page, 1800);
+          indCanvases.push(canvas);
+        }
+        item.canvases = indCanvases;
+        if (item.visitor && visitorFileMap[item.visitor.uid]) {
+          visitorFileMap[item.visitor.uid].canvases = indCanvases;
+        }
+      } catch (e) {
+        console.warn("Could not render individual canvases for", item.name, e);
+      }
+    }
+  }
+
+  updateProgress(100, "Server Scan Complete! Ready in Live Viewer.");
+  setTimeout(() => elements.progressContainer.classList.add("hidden"), 500);
+
+  state.processedResults = {
+    foundVisitorUids,
+    foundVisitorNos,
+    visitorFileMap,
+    individualPdfs,
+    combinedIndividualPdfBytes: null,
+    combinedMasterPdfBytes: masterBytes,
+    combinedPdfBytes: masterBytes,
+    combinedEntries,
+    zipBlob: zipBlob,
+    visitorSegments: {}
+  };
+
+  renderResultsSummary();
+  return true;
+}
+
 // ── Main Processing Pipeline ───────────────────────────────────
 
 async function runHighlighter() {
@@ -1673,6 +1905,24 @@ async function runHighlighter() {
       if (tabViewer) tabViewer.click();
     }
 
+    // ── Primary Engine: Private Python Cloud Engine ───────────
+    const usePythonApi = localStorage.getItem("tifr_cfg_use_python_api") !== "false";
+    const pythonApiUrl = (localStorage.getItem("tifr_cfg_python_api_url") || "https://tifr-highlighter-api.onrender.com").replace(/\/+$/, "");
+
+    if (usePythonApi && pythonApiUrl) {
+      try {
+        appendLog(`⚡ Connecting to Private Python Cloud Engine (${pythonApiUrl})...`, "ocr");
+        const apiSuccess = await runPythonHighlighter(pythonApiUrl, highlightColor);
+        if (apiSuccess) {
+          return;
+        }
+      } catch (apiErr) {
+        appendLog(`⚠️ Python Cloud Engine notice: ${apiErr.message}`, "warn");
+        appendLog(`Switching seamlessly to high-speed in-browser OCR engine...`, "info");
+      }
+    }
+
+    // ── Fallback Engine: Client-Side Browser OCR ─────────────
     const foundVisitorUids = new Set();
     const foundVisitorNos = new Set();
     const visitorFileMap = {};
@@ -3359,6 +3609,12 @@ if (btnDownloadIndCombinedEl) {
 }
 
 elements.btnDownloadZip.addEventListener("click", async () => {
+  if (state.processedResults?.zipBlob) {
+    showSecurityToast("Downloading complete highlighted package (ZIP)...");
+    triggerBlobDownload(state.processedResults.zipBlob, "TIFR_Highlighted_Approvals.zip");
+    return;
+  }
+
   const indPdfs = state.processedResults?.individualPdfs;
   if (!indPdfs || !indPdfs.length) return;
 
@@ -3630,15 +3886,25 @@ function initMobileTabs() {
 
 initMobileTabs();
 
-// Intercept Ctrl+P / Cmd+P to print the original sanction letter document instead of the browser webpage
-window.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
-    if (state.processedResults && typeof livePagesList !== "undefined" && livePagesList.length > 0) {
-      e.preventDefault();
-      window.printCurrentDocument();
-    }
+// ── Engine Mode Badge Indicator ────────────────────────────────
+function updateEngineModeBadge() {
+  const badge = document.getElementById("badge-engine-mode");
+  if (!badge) return;
+  const usePython = localStorage.getItem("tifr_cfg_use_python_api") !== "false";
+  if (usePython) {
+    badge.className = "px-2 py-0.5 text-[10px] sm:text-[11px] font-semibold bg-sky-100 hover:bg-sky-200 text-sky-800 rounded-full transition flex items-center space-x-1 shadow-2xs";
+    badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span><span>Python Cloud Engine</span>`;
+    badge.title = "Python Cloud Engine Active (Colab Precision). Click to configure in Settings.";
+  } else {
+    badge.className = "px-2 py-0.5 text-[10px] sm:text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-full transition flex items-center space-x-1 shadow-2xs";
+    badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span><span>Browser OCR Mode</span>`;
+    badge.title = "Browser Client Mode Active. Click to configure in Settings.";
   }
-});
+}
+
+updateEngineModeBadge();
+window.addEventListener("storage", updateEngineModeBadge);
+
 
 
 
