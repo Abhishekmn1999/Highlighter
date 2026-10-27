@@ -117,6 +117,8 @@ function normalize(text) {
     .replace(/[ğĞ]/g, "g")
     .replace(/[ıİ]/g, "i")
     .replace(/[şŞ]/g, "s")
+    .replace(/[ß]/g, "ss")
+    .replace(/[ñÑ]/g, "n")
     .replace(/\uFB01/g, "fi")
     .replace(/\uFB02/g, "fl")
     .replace(/\uFB00/g, "ff")
@@ -566,9 +568,16 @@ function findVisitorBoundary(words, visitor) {
       const hasLast = last && windowHasPart(entryWords, last);
       const matchingPartsCount = allParts.filter(p => windowHasPart(entryWords, p)).length;
 
+      const isNumMatch = !isNaN(targetNoInt) && targetNoInt === entry.num;
+      const hasAnyPart = allParts.some(p => p.length >= 3 && windowHasPart(entryWords, p));
+
+      // 0. Primary: Bullet number matches AND at least 1 name part matches (direct Colab equivalence)
+      if (isNumMatch && (hasFirst || hasLast || matchingPartsCount >= 1 || hasAnyPart)) {
+        score = (hasFirst && hasLast) ? 16 : 14;
+      }
       // 1. Both first and last name present
-      if (hasFirst && hasLast) {
-        score = 12;
+      else if (hasFirst && hasLast) {
+        score = isNumMatch ? 16 : 12;
       }
       // 2. Initial + Last name (e.g. "P. Chandra")
       else if (hasLast && last.length >= 4) {
@@ -578,22 +587,26 @@ function findVisitorBoundary(words, visitor) {
           return a === initial && w.raw.length <= 2;
         });
         if (hasInitial) {
-          score = 10;
+          score = isNumMatch ? 15 : 10;
         } else if (matchingPartsCount >= 1) {
-          score = 10;
+          score = isNumMatch ? 14 : 10;
         }
       }
       // 3. At least 2 significant name parts present
       else if (matchingPartsCount >= 2) {
-        score = 9;
+        score = isNumMatch ? 15 : 10;
       }
       // 4. Single-word name (mononym)
       else if (parts.length === 1 && hasFirst) {
-        score = 9;
+        score = isNumMatch ? 14 : 9;
+      }
+      // 5. Distinctive unique name (>= 6 characters)
+      else if (allParts.some(p => p.length >= 6 && windowHasPart(entryWords, p))) {
+        score = isNumMatch ? 14 : 9;
       }
 
       // Bonus if bullet number matches targetNo
-      if (score > 0 && targetNoInt === entry.num) {
+      if (score > 0 && isNumMatch) {
         score += 3;
       }
 
@@ -686,16 +699,17 @@ function findVisitorBoundary(words, visitor) {
     const hasFirst = windowHasPart(windowWords, first);
     const hasLast = windowHasPart(windowWords, last);
     const matchingPartsCount = allParts.filter(p => windowHasPart(windowWords, p)).length;
+    const hasAnyPart = allParts.some(p => p.length >= 3 && windowHasPart(windowWords, p));
 
     let score = 0;
-    if (hasFirst && hasLast) {
-      score = hasTargetNum ? 12 : 10;
+    if (hasTargetNum && (hasFirst || hasLast || matchingPartsCount >= 1 || hasAnyPart)) {
+      score = (hasFirst && hasLast) ? 16 : 14;
+    } else if (hasFirst && hasLast) {
+      score = hasTargetNum ? 14 : 10;
     } else if (hasTargetNum && hasLast && last.length >= 4) {
-      score = 11;
-    } else if (hasTargetNum && hasFirst && first.length >= 5) {
-      score = 11;
-    } else if (hasTargetNum && matchingPartsCount >= 1) {
-      score = 10;
+      score = 12;
+    } else if (hasTargetNum && hasFirst && first.length >= 4) {
+      score = 12;
     } else if (hasLast && last.length >= 4) {
       const initial = first[0];
       const hasInitial = windowWords.some(w => {
@@ -703,10 +717,12 @@ function findVisitorBoundary(words, visitor) {
         return a === initial && w.raw.length <= 2;
       });
       if (hasInitial) {
-        score = hasTargetNum ? 11 : 9;
+        score = hasTargetNum ? 12 : 9;
       }
     } else if (matchingPartsCount >= 2) {
-      score = hasTargetNum ? 10 : 8;
+      score = hasTargetNum ? 12 : 8;
+    } else if (hasAnyPart && allParts.some(p => p.length >= 6 && windowHasPart(windowWords, p))) {
+      score = hasTargetNum ? 14 : 8;
     }
 
     if (score > bestScore) {
@@ -714,7 +730,7 @@ function findVisitorBoundary(words, visitor) {
       let firstIdxInWords = -1;
       for (let k = winStart; k < winEnd; k++) {
         const a = alphaOnly(words[k].raw);
-        if (a && (a === first || isFuzzyTokenMatch(a, first))) {
+        if (a && allParts.some(p => p === a || isFuzzyTokenMatch(a, p))) {
           firstIdxInWords = k;
           break;
         }
@@ -1357,7 +1373,7 @@ async function extractWordsFromPage(page, viewport, canvas, ocrMode = "auto") {
     const pageTextNorm = words.map(w => w.norm).join(" ");
     hasVisitorContent = state.visitors.some(v => {
       const parts = cleanVisitorNameParts(v.name);
-      return parts.length >= 2 && parts.some(p => p.length >= 4 && pageTextNorm.includes(p));
+      return parts.some(p => p.length >= 3 && pageTextNorm.includes(p));
     });
   }
 
@@ -1374,13 +1390,27 @@ async function extractWordsFromPage(page, viewport, canvas, ocrMode = "auto") {
       appendLog("📄 Scanned page detected! Running high-speed Tesseract OCR...", "ocr");
 
       try {
-        const maxDim = 1800;
+        const maxDim = 2000;
         const ocrScale = Math.min(1.0, maxDim / Math.max(canvas.width, canvas.height));
         const ocrCanvas = document.createElement("canvas");
         ocrCanvas.width = Math.round(canvas.width * ocrScale);
         ocrCanvas.height = Math.round(canvas.height * ocrScale);
         const ocrCtx = ocrCanvas.getContext("2d");
         ocrCtx.drawImage(canvas, 0, 0, ocrCanvas.width, ocrCanvas.height);
+
+        // Fast adaptive contrast enhancement for pristine OCR character recognition
+        try {
+          const imgData = ocrCtx.getImageData(0, 0, ocrCanvas.width, ocrCanvas.height);
+          const d = imgData.data;
+          for (let i = 0; i < d.length; i += 4) {
+            const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            const val = gray > 180 ? 255 : (gray < 110 ? 0 : gray);
+            d[i] = val;
+            d[i + 1] = val;
+            d[i + 2] = val;
+          }
+          ocrCtx.putImageData(imgData, 0, 0);
+        } catch (_) {}
 
         if (!window._tifrOcrWorker) {
           appendLog("Initializing OCR Engine (one-time setup)...", "ocr");
@@ -1398,21 +1428,51 @@ async function extractWordsFromPage(page, viewport, canvas, ocrMode = "auto") {
         }
 
         const ocrPromise = window._tifrOcrWorker.recognize(ocrCanvas);
-        const ocrResult = await timeoutPromise(ocrPromise, 25000, "OCR timed out (25s limit)");
+        const ocrResult = await timeoutPromise(ocrPromise, 90000, "OCR timed out (90s limit)");
         const ocrWords = ocrResult?.data?.words || [];
         const extractedOcrWords = [];
         for (const w of ocrWords) {
           if (!w.text || !w.text.trim() || w.confidence < 15) continue;
-          extractedOcrWords.push({
-            raw: w.text.trim(),
-            norm: normalize(w.text),
-            left: w.bbox.x0 / ocrScale,
-            top: w.bbox.y0 / ocrScale,
-            right: w.bbox.x1 / ocrScale,
-            bottom: w.bbox.y1 / ocrScale,
-            baseline: w.baseline ? (w.baseline.y0 / ocrScale) : ((w.bbox.y1 - 3) / ocrScale),
-            block: w.block ? w.block.id : 1
-          });
+          const text = w.text.trim();
+          // Check for merged bullet tokens e.g. "2.Ozgur" -> "2." and "Ozgur"
+          const mSplit = text.match(/^([(\[]?\d{1,3}[.)\]])([A-Za-z].*)$/);
+          if (mSplit) {
+            const numPart = mSplit[1];
+            const wordPart = mSplit[2];
+            const splitRatio = numPart.length / text.length;
+            const splitX = w.bbox.x0 + (w.bbox.x1 - w.bbox.x0) * splitRatio;
+            extractedOcrWords.push({
+              raw: numPart,
+              norm: normalize(numPart),
+              left: w.bbox.x0 / ocrScale,
+              top: w.bbox.y0 / ocrScale,
+              right: splitX / ocrScale,
+              bottom: w.bbox.y1 / ocrScale,
+              baseline: w.baseline ? (w.baseline.y0 / ocrScale) : ((w.bbox.y1 - 3) / ocrScale),
+              block: w.block ? w.block.id : 1
+            });
+            extractedOcrWords.push({
+              raw: wordPart,
+              norm: normalize(wordPart),
+              left: splitX / ocrScale,
+              top: w.bbox.y0 / ocrScale,
+              right: w.bbox.x1 / ocrScale,
+              bottom: w.bbox.y1 / ocrScale,
+              baseline: w.baseline ? (w.baseline.y0 / ocrScale) : ((w.bbox.y1 - 3) / ocrScale),
+              block: w.block ? w.block.id : 1
+            });
+          } else {
+            extractedOcrWords.push({
+              raw: text,
+              norm: normalize(text),
+              left: w.bbox.x0 / ocrScale,
+              top: w.bbox.y0 / ocrScale,
+              right: w.bbox.x1 / ocrScale,
+              bottom: w.bbox.y1 / ocrScale,
+              baseline: w.baseline ? (w.baseline.y0 / ocrScale) : ((w.bbox.y1 - 3) / ocrScale),
+              block: w.block ? w.block.id : 1
+            });
+          }
         }
 
         if (extractedOcrWords.length > 0) {
@@ -1421,6 +1481,7 @@ async function extractWordsFromPage(page, viewport, canvas, ocrMode = "auto") {
         }
       } catch (ocrErr) {
         console.warn("OCR Warning:", ocrErr);
+        window._tifrOcrWorker = null;
         appendLog(`OCR note: ${ocrErr.message}. Continuing...`, "warn");
       }
     }
@@ -1476,11 +1537,11 @@ async function extractWordsFromPage(page, viewport, canvas, ocrMode = "auto") {
   return words;
 }
 
-async function renderPdfPageToCanvas(page, maxPixelWidth = 1350) {
+async function renderPdfPageToCanvas(page, maxPixelWidth = 1800) {
   const baseViewport = page.getViewport({ scale: 1.0 });
-  // Dynamic resolution cap: keeps digital vector PDFs crisp at 1.85x scale (~1100px),
-  // while capping high-DPI scanned pages (2480pt) at 1350px width to eliminate memory bloat.
-  const scale = Math.min(1.85, Math.max(0.4, maxPixelWidth / baseViewport.width));
+  // High-DPI crisp rendering: renders at up to 2.8x scale (~1660-1800px width)
+  // for razor-sharp OCR recognition and high-fidelity output
+  const scale = Math.min(2.8, Math.max(0.5, maxPixelWidth / baseViewport.width));
   const viewport = page.getViewport({ scale });
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(viewport.width);
@@ -1641,7 +1702,7 @@ async function runHighlighter() {
         );
         appendLog(`Processing Page ${p}/${numPages}...`);
         const page = await pdf.getPage(p);
-        const { canvas, ctx, viewport } = await renderPdfPageToCanvas(page, 1350);
+        const { canvas, ctx, viewport } = await renderPdfPageToCanvas(page, 1800);
         const words = await extractWordsFromPage(page, viewport, canvas, ocrMode);
 
         rawCanvases.push(canvas);
