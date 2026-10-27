@@ -97,7 +97,7 @@ def visitor_matches_context(v, ctx):
     return True
 
 def extract_words(page_img, min_conf=20):
-    data = pytesseract.image_to_data(page_img, output_type=pytesseract.Output.DICT, lang="eng")
+    data = pytesseract.image_to_data(page_img, output_type=pytesseract.Output.DICT, lang="eng", config="--oem 1")
     words = []
     for i in range(len(data["text"])):
         txt = data["text"][i].strip()
@@ -284,7 +284,7 @@ async def highlight_documents(
                 f.write(content)
 
             try:
-                pages = convert_from_path(local_pdf, dpi=300)
+                pages = convert_from_path(local_pdf, dpi=200, thread_count=2)
             except Exception as e:
                 continue
 
@@ -319,7 +319,7 @@ async def highlight_documents(
                         })
                         break
 
-            # A. Build Individual Visitor PDFs
+            # A. Build Individual Visitor PDFs (High-Speed JPEG-in-PDF encoding)
             for v, page_num, start_idx, end_idx in pdf_matches:
                 display_name = format_visitor_display_name(v["name"])
                 clean_name   = safe_filename(display_name)
@@ -334,13 +334,13 @@ async def highlight_documents(
                         p_img = draw_highlight(p_img, lines, color=color_rgb)
                         individual_pages.append(p_img)
                     else:
-                        individual_pages.append(img.copy())
+                        individual_pages.append(img)
 
                 buf = io.BytesIO()
                 if len(individual_pages) == 1:
-                    individual_pages[0].save(buf, "PDF", resolution=300.0)
+                    individual_pages[0].save(buf, "PDF", resolution=200.0, quality=82)
                 else:
-                    individual_pages[0].save(buf, "PDF", resolution=300.0, save_all=True, append_images=individual_pages[1:])
+                    individual_pages[0].save(buf, "PDF", resolution=200.0, quality=82, save_all=True, append_images=individual_pages[1:])
                 individual_pdf_buffers.append((out_filename, buf.getvalue()))
 
             # B. Save Copy with ALL Visitors Highlighted in this PDF
@@ -351,7 +351,7 @@ async def highlight_documents(
                 for p_idx, img in enumerate(raw_pages):
                     segs = all_segments_by_page[p_idx]
                     if not segs:
-                        all_highlighted_pages.append(img.copy())
+                        all_highlighted_pages.append(img)
                         continue
 
                     p_img = img.copy()
@@ -363,9 +363,9 @@ async def highlight_documents(
 
                 temp_master_path = os.path.join(temp_dir, f"master_{safe_filename(pdf_name)}.pdf")
                 if len(all_highlighted_pages) == 1:
-                    all_highlighted_pages[0].save(temp_master_path, "PDF", resolution=300.0)
+                    all_highlighted_pages[0].save(temp_master_path, "PDF", resolution=200.0, quality=82)
                 else:
-                    all_highlighted_pages[0].save(temp_master_path, "PDF", resolution=300.0, save_all=True, append_images=all_highlighted_pages[1:])
+                    all_highlighted_pages[0].save(temp_master_path, "PDF", resolution=200.0, quality=82, save_all=True, append_images=all_highlighted_pages[1:])
 
                 master_source_pdfs.append((earliest_sheet_idx, temp_master_path))
 

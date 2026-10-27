@@ -1831,25 +1831,36 @@ async function runPythonHighlighter(pythonApiUrl, highlightColor) {
     }
   }
 
+  // Assign master canvases immediately so Live Viewer and UI finish in <1 second
   for (const item of individualPdfs) {
-    if (item.pdfBytes) {
-      try {
-        const indDoc = await pdfjsLib.getDocument({ data: item.pdfBytes }).promise;
-        const indCanvases = [];
-        for (let p = 1; p <= indDoc.numPages; p++) {
-          const page = await indDoc.getPage(p);
-          const { canvas } = await renderPdfPageToCanvas(page, 1800);
-          indCanvases.push(canvas);
-        }
-        item.canvases = indCanvases;
-        if (item.visitor && visitorFileMap[item.visitor.uid]) {
-          visitorFileMap[item.visitor.uid].canvases = indCanvases;
-        }
-      } catch (e) {
-        console.warn("Could not render individual canvases for", item.name, e);
-      }
+    item.canvases = masterCanvases;
+    if (item.visitor && visitorFileMap[item.visitor.uid]) {
+      visitorFileMap[item.visitor.uid].canvases = masterCanvases;
     }
   }
+
+  // Progressively render exact single-visitor letter canvases in background without freezing the UI
+  setTimeout(async () => {
+    for (const item of individualPdfs) {
+      if (item.pdfBytes && item.canvases === masterCanvases) {
+        try {
+          const indDoc = await pdfjsLib.getDocument({ data: item.pdfBytes }).promise;
+          const indCanvases = [];
+          for (let p = 1; p <= indDoc.numPages; p++) {
+            const page = await indDoc.getPage(p);
+            const { canvas } = await renderPdfPageToCanvas(page, 1800);
+            indCanvases.push(canvas);
+          }
+          item.canvases = indCanvases;
+          if (item.visitor && visitorFileMap[item.visitor.uid]) {
+            visitorFileMap[item.visitor.uid].canvases = indCanvases;
+          }
+        } catch (e) {
+          // Keep shared master canvases as fallback
+        }
+      }
+    }
+  }, 200);
 
   updateProgress(100, "Server Scan Complete! Ready in Live Viewer.");
   setTimeout(() => elements.progressContainer.classList.add("hidden"), 500);
@@ -3904,6 +3915,23 @@ function updateEngineModeBadge() {
 
 updateEngineModeBadge();
 window.addEventListener("storage", updateEngineModeBadge);
+
+// Warm up Render backend immediately on page load so it is hot by the time user clicks scan
+(function warmUpBackend() {
+  const usePython = localStorage.getItem("tifr_cfg_use_python_api") !== "false";
+  const pythonApiUrl = (localStorage.getItem("tifr_cfg_python_api_url") || "https://tifr-highlighter-api.onrender.com").replace(/\/+$/, "");
+  if (usePython && pythonApiUrl) {
+    fetch(pythonApiUrl + "/", { method: "GET" })
+      .then(r => r.json())
+      .then(d => {
+        const badge = document.getElementById("badge-engine-mode");
+        if (badge && d.status === "online") {
+          badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span><span>Python Engine (Ready)</span>`;
+        }
+      })
+      .catch(() => {});
+  }
+})();
 
 
 
