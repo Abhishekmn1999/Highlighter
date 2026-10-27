@@ -468,11 +468,37 @@ function windowHasPart(windowWords, part) {
   return false;
 }
 
+function getVisitorPreambleBarrierIdx(words) {
+  if (!words || words.length === 0) return 0;
+  let maxBarrier = 0;
+  for (let i = 0; i < words.length; i++) {
+    const snippet = words.slice(i, Math.min(i + 6, words.length)).map(w => normalize(w.raw)).join(" ");
+    if (snippet.includes("details are as follows") ||
+        snippet.includes("visitors details") ||
+        snippet.includes("as follows") ||
+        snippet.includes("nimnanusar hai") ||
+        /निम्नानुसार\s*है/.test(words.slice(i, Math.min(i + 3, words.length)).map(w => w.raw).join(" "))) {
+      for (let k = i; k < Math.min(i + 8, words.length); k++) {
+        const raw = words[k].raw;
+        if (raw.includes(":") || normalize(raw).includes("follows") || /निम्नानुसार|है/.test(raw)) {
+          maxBarrier = Math.max(maxBarrier, k + 1);
+        }
+      }
+      if (maxBarrier === 0) {
+        maxBarrier = Math.max(maxBarrier, i + 5);
+      }
+    }
+  }
+  return maxBarrier;
+}
+
 function partitionPageVisitorEntries(words) {
   if (!words || words.length === 0) return [];
 
+  const barrierIdx = getVisitorPreambleBarrierIdx(words);
+
   const bulletCandidates = [];
-  for (let i = 0; i < words.length; i++) {
+  for (let i = barrierIdx; i < words.length; i++) {
     const raw = words[i].raw.trim();
     const m = raw.match(/^[\(\[]?(\d+)[.)\]]?$/);
     if (!m) continue;
@@ -519,13 +545,11 @@ function partitionPageVisitorEntries(words) {
 
   if (bulletCandidates.length === 0) return [];
 
-  // If bullet #1 exists on this page, any candidates appearing before #1 with num > 1 are address/header numbers
-  const firstOneIdx = bulletCandidates.findIndex(c => c.num === 1);
-  const validCandidates = firstOneIdx !== -1
-    ? bulletCandidates.filter((c, idx) => idx >= firstOneIdx || c.num === 1)
-    : bulletCandidates;
+  // Strictly discard any candidates before the barrier
+  const validCandidates = bulletCandidates.filter(c => c.wordIdx >= barrierIdx);
 
   if (validCandidates.length === 0) return [];
+
 
   const entries = [];
   for (let b = 0; b < validCandidates.length; b++) {
@@ -699,12 +723,14 @@ function findVisitorBoundary(words, visitor) {
   }
 
   // ── Strategy 2: Sliding-Window Fallback for Unnumbered Documents ──
+  const barrierIdx = getVisitorPreambleBarrierIdx(words);
   let bestStart = -1;
   let bestScore = 0;
   let bestFirstTokIdx = -1;
 
-  for (let i = 0; i < words.length; i++) {
+  for (let i = barrierIdx; i < words.length; i++) {
     if (isClosingParagraph(words, i)) continue; // Skip tokens that fall inside closing headers/footers
+
 
     const rawTok = words[i].raw;
     const wAlpha = alphaOnly(rawTok);
@@ -821,11 +847,11 @@ function findVisitorBoundary(words, visitor) {
 
   if (bestStart === -1 || bestScore < 8) return null;
 
-  let startIdx = bestStart;
+  let startIdx = Math.max(bestStart, barrierIdx);
   let detectedPdfNo = null;
 
   let foundTargetNo = false;
-  for (let b = bestStart; b >= Math.max(0, bestStart - 6); b--) {
+  for (let b = bestStart; b >= Math.max(barrierIdx, bestStart - 6); b--) {
     if (isNumberToken(words[b].raw, targetNo, words, b)) {
       startIdx = b;
       detectedPdfNo = parseInt(targetNo, 10);
@@ -837,6 +863,7 @@ function findVisitorBoundary(words, visitor) {
       break;
     }
   }
+
 
   if (!foundTargetNo) {
     if (isNumberToken(words[bestStart].raw, targetNo, words, bestStart)) {
@@ -967,8 +994,9 @@ function findVisitorBoundary(words, visitor) {
     }
   }
 
-  return { start: startIdx, end: endIdx, detectedPdfNo };
+  return { start: Math.max(startIdx, barrierIdx), end: endIdx, detectedPdfNo };
 }
+
 
 function findVisitorStartIdx(words, visitor) {
   const b = findVisitorBoundary(words, visitor);
