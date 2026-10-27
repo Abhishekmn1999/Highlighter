@@ -281,6 +281,10 @@ const CLOSING_PHRASES = [
   "www.",
   "http",
   "dean",
+  "director",
+  "centre director",
+  "rajesh",
+  "gopakumar",
   "registrar",
   "i am writing to request",
   "निवेदन",
@@ -296,7 +300,12 @@ const CLOSING_PHRASES = [
   "please do not hesitate",
   "सादर",
   "best regards",
-  "contact us"
+  "contact us",
+  "encl",
+  "संलग्नक",
+  "as stated above",
+  "discrepancy",
+  "prevail and will be binding"
 ];
 
 function isClosingParagraph(words, idx) {
@@ -312,16 +321,20 @@ function isClosingParagraph(words, idx) {
       rawLower.includes("website") || rawLower.includes("वेबसाइट") ||
       rawLower.includes("email") || rawLower.includes("ईमेल") ||
       rawLower.includes("fax") || rawLower.includes("फ़ैक्स") ||
+      rawLower.includes("director") || rawLower.includes("निदेशक") ||
+      rawLower.includes("gopakumar") || rawLower.includes("राजेश") ||
+      rawLower.includes("encl") || rawLower.includes("संलग्नक") ||
+      rawLower.includes("discrepancy") ||
       rawLower.includes("www.") || rawLower.includes("@")) {
     return true;
   }
 
   const snippet = words
-    .slice(idx, Math.min(idx + 6, words.length))
+    .slice(idx, Math.min(idx + 8, words.length))
     .map(w => normalize(w.raw))
     .join(" ");
 
-  return CLOSING_PHRASES.some(p => snippet.startsWith(p));
+  return CLOSING_PHRASES.some(p => snippet.includes(p));
 }
 
 function isParentheticalNote(words, idx) {
@@ -455,6 +468,8 @@ function partitionPageVisitorEntries(words) {
 
   const bulletCandidates = [];
   for (let i = 0; i < words.length; i++) {
+    if (isClosingParagraph(words, i)) break; // Stop looking for bullet candidates once closing paragraph starts
+
     const raw = words[i].raw.trim();
     const m = raw.match(/^[\(\[]?(\d+)[.)\]]?$/);
     if (!m) continue;
@@ -527,6 +542,15 @@ function partitionPageVisitorEntries(words) {
       }
 
       endIdx = Math.min(closingIdx, dateEndIdx);
+
+      // Safety limit: single entry cannot exceed 38 words or 350 vertical pixels
+      const startTop = words[startIdx].deskewedY ?? words[startIdx].top;
+      for (let k = startIdx + 1; k < endIdx; k++) {
+        if (k > startIdx + 38 || ((words[k].deskewedY ?? words[k].top) - startTop > 350)) {
+          endIdx = k;
+          break;
+        }
+      }
     }
 
     const entryWords = words.slice(startIdx, endIdx);
@@ -649,6 +673,8 @@ function findVisitorBoundary(words, visitor) {
   let bestFirstTokIdx = -1;
 
   for (let i = 0; i < words.length; i++) {
+    if (isClosingParagraph(words, i)) break; // Stop looking for visitors once we reach closing paragraph / signatures
+
     const rawTok = words[i].raw;
     const wAlpha = alphaOnly(rawTok);
     const isNum = isNumberToken(rawTok, targetNo, words, i);
@@ -722,7 +748,7 @@ function findVisitorBoundary(words, visitor) {
     } else if (matchingPartsCount >= 2) {
       score = hasTargetNum ? 12 : 8;
     } else if (hasAnyPart && allParts.some(p => p.length >= 6 && windowHasPart(windowWords, p))) {
-      score = hasTargetNum ? 14 : 8;
+      score = hasTargetNum ? 14 : 0;
     }
 
     if (score > bestScore) {
@@ -819,9 +845,16 @@ function findVisitorBoundary(words, visitor) {
 
   let endIdx = words.length;
   let datesFound = 0;
+  const startTop = words[startIdx].deskewedY ?? words[startIdx].top;
 
   for (let j = startIdx + 1; j < words.length; j++) {
     const raw = words[j].raw.trim();
+
+    // Safety limit: visitor entry cannot exceed 38 words or 350 vertical pixels
+    if (j > startIdx + 38 || ((words[j].deskewedY ?? words[j].top) - startTop > 350)) {
+      endIdx = j;
+      break;
+    }
 
     if (isClosingParagraph(words, j)) {
       endIdx = j;

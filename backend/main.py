@@ -28,7 +28,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
@@ -126,6 +126,9 @@ def find_visitor_start_idx(words, visitor):
 
     # Strategy 1: Anchor by Name Match, then search backward for number token
     for i, w in enumerate(words):
+        if is_closing_text(words, i):
+            break
+
         w_alpha = alpha_only(w["raw"])
         is_first_match = bool(first and (w_alpha == first or (len(first) >= 4 and first in w_alpha)))
         is_last_match = bool(last and (w_alpha == last or (len(last) >= 4 and last in w_alpha)))
@@ -135,7 +138,8 @@ def find_visitor_start_idx(words, visitor):
             window_str = " ".join(alpha_only(item["raw"]) for item in window_words)
 
             both_match = bool(first and last and first in window_str and last in window_str)
-            single_long_match = bool((last and len(last) >= 5 and last in window_str) or (first and len(first) >= 5 and first in window_str))
+            has_num = any(is_number_token(words[b]["raw"], target_no) for b in range(max(0, i - 9), min(len(words), i + 2)))
+            single_long_match = bool(((last and len(last) >= 6 and last in window_str) or (first and len(first) >= 6 and first in window_str)) and has_num)
 
             if both_match or single_long_match:
                 for b in range(i, max(-1, i - 9), -1):
@@ -147,6 +151,8 @@ def find_visitor_start_idx(words, visitor):
 
     # Strategy 2: Forward scan fallback
     for i, w in enumerate(words):
+        if is_closing_text(words, i):
+            break
         if is_number_token(w["raw"], target_no):
             if is_valid_visitor_start(words, i, visitor):
                 return i
@@ -178,17 +184,21 @@ CLOSING_PHRASES = [
     "director",
     "registrar",
     "encl",
-    "discrepancy"
+    "discrepancy",
+    "rajesh",
+    "gopakumar",
+    "centre director",
+    "prevail and will be binding"
 ]
 
 def is_closing_text(words, idx):
     raw_lower = normalize(words[idx]["raw"])
-    if any(k in raw_lower for k in ["telephone", "website", "email", "fax", "www.", "@", "director", "encl", "discrepancy"]):
+    if any(k in raw_lower for k in ["telephone", "website", "email", "fax", "www.", "@", "director", "encl", "discrepancy", "rajesh", "gopakumar", "निदेशक"]):
         return True
     if re.search(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}", words[idx]["raw"]):
         return False
     snippet = " ".join(normalize(words[j]["raw"]) for j in range(idx, min(idx + 5, len(words))))
-    return any(snippet.startswith(p) for p in CLOSING_PHRASES)
+    return any(p in snippet for p in CLOSING_PHRASES)
 
 def find_end_idx(words, start_idx, next_no):
     start_top = words[start_idx]["top"]
