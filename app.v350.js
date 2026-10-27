@@ -205,6 +205,7 @@ function isNumberToken(word, n, words = null, idx = -1) {
   }
 
   const cleaned = word.replace(/[^0-9]/g, "");
+  if (cleaned.startsWith("0") && cleaned.length > 1) return false;
   if (cleaned === String(n)) {
     if (word.length <= String(n).length + 3) {
       return true;
@@ -504,15 +505,32 @@ function partitionPageVisitorEntries(words) {
       continue;
     }
 
+    // Reject numbers with leading zeros (e.g. pin code "005")
+    if (/^0\d+/.test(raw.replace(/[^0-9]/g, ""))) continue;
+
+    // Reject numbers preceded by pin codes or city addresses (e.g. "Mumbai - 400 005")
+    if (i > 0 && /^[-,;:]$/.test(words[i - 1].raw) && i > 1 && /^\d{3,6}$/.test(words[i - 2].raw)) continue;
+    if (i > 0 && /mumbai|bengaluru|bangalore|delhi|pincode|pin|code/i.test(normalize(words[i - 1].raw))) continue;
+    if (i > 1 && /mumbai|bengaluru|bangalore|delhi|pincode|pin|code/i.test(normalize(words[i - 2].raw))) continue;
+    if (i > 0 && /अनुबंध|विवरण|आगंतुक|क्रमांक|पिन|दूरभाष/i.test(words[i - 1].raw)) continue;
+
     bulletCandidates.push({ wordIdx: i, num: num, top: (words[i].deskewedY ?? words[i].top) });
   }
 
   if (bulletCandidates.length === 0) return [];
 
+  // If bullet #1 exists on this page, any candidates appearing before #1 with num > 1 are address/header numbers
+  const firstOneIdx = bulletCandidates.findIndex(c => c.num === 1);
+  const validCandidates = firstOneIdx !== -1
+    ? bulletCandidates.filter((c, idx) => idx >= firstOneIdx || c.num === 1)
+    : bulletCandidates;
+
+  if (validCandidates.length === 0) return [];
+
   const entries = [];
-  for (let b = 0; b < bulletCandidates.length; b++) {
-    const curr = bulletCandidates[b];
-    const next = bulletCandidates[b + 1];
+  for (let b = 0; b < validCandidates.length; b++) {
+    const curr = validCandidates[b];
+    const next = validCandidates[b + 1];
     let startIdx = curr.wordIdx;
 
     if (startIdx > 0 && /^[(\[#]$/.test(words[startIdx - 1].raw.trim())) {

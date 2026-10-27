@@ -51,6 +51,10 @@ def token_similarity(a, b):
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 def is_number_token(word, n_str, next_word=None):
+    if not word:
+        return False
+    if word.startswith("0") and len(word) > 1:
+        return False
     cleaned = re.sub(r"[^0-9]", "", word)
     if cleaned == str(n_str):
         if re.fullmatch(rf"{n_str}[.),:;]?", word):
