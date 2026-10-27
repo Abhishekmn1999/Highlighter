@@ -228,7 +228,8 @@ def is_closing_text(words, idx):
     if re.search(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}", words[idx]["raw"]):
         return False
     snippet = " ".join(normalize(words[j]["raw"]) for j in range(idx, min(idx + 5, len(words))))
-    return any(p in snippet for p in CLOSING_PHRASES)
+    return any(snippet.startswith(p) for p in CLOSING_PHRASES)
+
 
 def find_end_idx(words, start_idx, next_no):
     start_top = words[start_idx]["top"]

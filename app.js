@@ -335,12 +335,13 @@ function isClosingParagraph(words, idx) {
   }
 
   const snippet = words
-    .slice(idx, Math.min(idx + 8, words.length))
+    .slice(idx, Math.min(idx + 5, words.length))
     .map(w => normalize(w.raw))
     .join(" ");
 
-  return CLOSING_PHRASES.some(p => snippet.includes(p));
+  return CLOSING_PHRASES.some(p => snippet.startsWith(p));
 }
+
 
 function isParentheticalNote(words, idx) {
   if (!words || !words[idx]) return false;
@@ -620,8 +621,63 @@ function partitionPageVisitorEntries(words) {
     });
   }
 
-  return entries;
+  return splitMultiVisitorEntries(entries, words);
 }
+
+function splitMultiVisitorEntries(entries, words) {
+  const refined = [];
+  for (const entry of entries) {
+    const entryWords = entry.words;
+    const dateIndices = [];
+    for (let k = 0; k < entryWords.length; k++) {
+      if (isDateToken(entryWords[k].raw, entryWords, k)) {
+        dateIndices.push(k);
+      }
+    }
+
+    let splitPoint = -1;
+    for (let d = 0; d < dateIndices.length - 1; d++) {
+      const idx1 = dateIndices[d];
+      const idx2 = dateIndices[d + 1];
+      for (let m = idx1 + 1; m < idx2; m++) {
+        const raw = entryWords[m].raw.toLowerCase();
+        if (raw === "from" || (entryWords[m].left <= entryWords[0].left + 50 && m > idx1 + 1)) {
+          splitPoint = idx1 + 1;
+          while (splitPoint < entryWords.length && /^[.,;]$/.test(entryWords[splitPoint].raw)) {
+            splitPoint++;
+          }
+          break;
+        }
+      }
+      if (splitPoint !== -1) break;
+    }
+
+    if (splitPoint !== -1) {
+      const part1Words = entryWords.slice(0, splitPoint);
+      const part2Words = entryWords.slice(splitPoint);
+      refined.push({
+        num: entry.num,
+        start: entry.start,
+        end: entry.start + splitPoint,
+        words: part1Words,
+        text: part1Words.map(w => w.raw).join(" "),
+        normText: normalize(part1Words.map(w => w.raw).join(" "))
+      });
+      refined.push({
+        num: entry.num + 1,
+        start: entry.start + splitPoint,
+        end: entry.end,
+        words: part2Words,
+        text: part2Words.map(w => w.raw).join(" "),
+        normText: normalize(part2Words.map(w => w.raw).join(" "))
+      });
+    } else {
+      refined.push(entry);
+    }
+  }
+  return refined;
+}
+
 
 function findVisitorBoundary(words, visitor) {
   const parts = cleanVisitorNameParts(visitor.name);
@@ -927,7 +983,7 @@ function findVisitorBoundary(words, visitor) {
 
     if (detectedPdfNo !== null) {
       if (isNumberToken(raw, String(detectedPdfNo + 1), words, j) || (raw === String(detectedPdfNo + 1) + ".")) {
-        const isStartOfLine = words[j].left < 220 && (
+        const isStartOfLine = (words[j].left <= words[startIdx].left + 80 || words[j].left < 520) && (
           (words[j].deskewedY ?? words[j].top) > (words[startIdx].deskewedY ?? words[startIdx].top) + 8
         );
         if (isStartOfLine && !isDateContext(words, j)) {
@@ -938,7 +994,7 @@ function findVisitorBoundary(words, visitor) {
     }
 
     if (j > startIdx + 3 && /^\d+[.):]$/.test(raw)) {
-      const isStartOfLine = words[j].left < 220 && (
+      const isStartOfLine = (words[j].left <= words[startIdx].left + 80 || words[j].left < 520) && (
         (words[j].deskewedY ?? words[j].top) > (words[startIdx].deskewedY ?? words[startIdx].top) + 8
       );
       if (isStartOfLine && !isDateContext(words, j)) {
@@ -946,6 +1002,7 @@ function findVisitorBoundary(words, visitor) {
         break;
       }
     }
+
 
     const dateSpan = getDateSpan(words, j);
     if (dateSpan) {
@@ -1749,7 +1806,7 @@ async function runPythonHighlighter(pythonApiUrl, highlightColor) {
   appendLog(`Sending ${state.uploadedFiles.length} PDF(s) to server...`, "ocr");
 
   const abortCtrl = new AbortController();
-  const timeoutId = setTimeout(() => abortCtrl.abort(), 180000);
+  const timeoutId = setTimeout(() => abortCtrl.abort(), 45000);
 
   let response;
   try {
@@ -1762,11 +1819,12 @@ async function runPythonHighlighter(pythonApiUrl, highlightColor) {
   } catch (netErr) {
     clearTimeout(timeoutId);
     if (netErr.name === "AbortError") {
-      throw new Error("Server request timed out after 3 minutes");
+      throw new Error("Server took >45s (cold start); seamlessly using browser engine");
     }
     throw new Error(`Connection failed (${netErr.message})`);
   }
   clearTimeout(timeoutId);
+
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "Unknown server error");
