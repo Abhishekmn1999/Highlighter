@@ -468,8 +468,6 @@ function partitionPageVisitorEntries(words) {
 
   const bulletCandidates = [];
   for (let i = 0; i < words.length; i++) {
-    if (isClosingParagraph(words, i)) break; // Stop looking for bullet candidates once closing paragraph starts
-
     const raw = words[i].raw.trim();
     const m = raw.match(/^[\(\[]?(\d+)[.)\]]?$/);
     if (!m) continue;
@@ -673,7 +671,7 @@ function findVisitorBoundary(words, visitor) {
   let bestFirstTokIdx = -1;
 
   for (let i = 0; i < words.length; i++) {
-    if (isClosingParagraph(words, i)) break; // Stop looking for visitors once we reach closing paragraph / signatures
+    if (isClosingParagraph(words, i)) continue; // Skip tokens that fall inside closing headers/footers
 
     const rawTok = words[i].raw;
     const wAlpha = alphaOnly(rawTok);

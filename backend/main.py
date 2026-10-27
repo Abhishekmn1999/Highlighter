@@ -127,7 +127,7 @@ def find_visitor_start_idx(words, visitor):
     # Strategy 1: Anchor by Name Match, then search backward for number token
     for i, w in enumerate(words):
         if is_closing_text(words, i):
-            break
+            continue
 
         w_alpha = alpha_only(w["raw"])
         is_first_match = bool(first and (w_alpha == first or (len(first) >= 4 and first in w_alpha)))
@@ -152,7 +152,7 @@ def find_visitor_start_idx(words, visitor):
     # Strategy 2: Forward scan fallback
     for i, w in enumerate(words):
         if is_closing_text(words, i):
-            break
+            continue
         if is_number_token(w["raw"], target_no):
             if is_valid_visitor_start(words, i, visitor):
                 return i
