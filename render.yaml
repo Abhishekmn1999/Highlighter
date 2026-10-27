@@ -1,5 +1,5 @@
 services:
-  # Static Site: 100% Free Forever, Never Sleeps, Zero Cold Starts
+  # Static Webapp Frontend
   - type: web
     name: tifr-visitor-highlighter
     env: static
@@ -12,3 +12,13 @@ services:
       - path: /*
         name: X-Content-Type-Options
         value: nosniff
+
+  # Private Python API (Native Linux C++ Poppler + Tesseract - 100% Code Hidden)
+  - type: web
+    name: tifr-python-api
+    env: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /
+
