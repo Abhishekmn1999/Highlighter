@@ -188,12 +188,16 @@ CLOSING_PHRASES = [
     "rajesh",
     "gopakumar",
     "centre director",
-    "prevail and will be binding"
+    "prevail and will be binding",
+    "hesitate",
+    "questions",
+    "regards",
+    "contact"
 ]
 
 def is_closing_text(words, idx):
     raw_lower = normalize(words[idx]["raw"])
-    if any(k in raw_lower for k in ["telephone", "website", "email", "fax", "www.", "@", "director", "encl", "discrepancy", "rajesh", "gopakumar", "निदेशक"]):
+    if any(k in raw_lower for k in ["telephone", "website", "email", "fax", "www.", "@", "director", "encl", "discrepancy", "rajesh", "gopakumar", "निदेशक", "hesitate", "questions", "regards", "contact", "संकोच", "सादर"]):
         return True
     if re.search(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}", words[idx]["raw"]):
         return False

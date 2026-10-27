@@ -325,6 +325,10 @@ function isClosingParagraph(words, idx) {
       rawLower.includes("gopakumar") || rawLower.includes("राजेश") ||
       rawLower.includes("encl") || rawLower.includes("संलग्नक") ||
       rawLower.includes("discrepancy") ||
+      rawLower.includes("hesitate") || rawLower.includes("संकोच") ||
+      rawLower.includes("questions") || rawLower.includes("प्रश्न") ||
+      rawLower.includes("regards") || rawLower.includes("सादर") ||
+      rawLower.includes("contact") || rawLower.includes("संपर्क") ||
       rawLower.includes("www.") || rawLower.includes("@")) {
     return true;
   }
@@ -489,6 +493,17 @@ function partitionPageVisitorEntries(words) {
     if (i > 0 && /annexure|ref|dated/i.test(words[i - 1].raw)) continue;
     if (i > 1 && /annexure|ref|dated/i.test(words[i - 2].raw)) continue;
 
+    // Reject address / telephone / survey numbers (e.g. "Survey No. 151")
+    if (i > 0 && /survey|plot|flat|room|block|sector|pin|box|tel|fax/i.test(words[i - 1].raw)) continue;
+    if (i > 1 && /survey|plot|flat|room|block|sector|pin|box|tel|fax/i.test(words[i - 2].raw)) continue;
+
+    // Reject numbers followed by institutional address localities
+    const immediateWords = words.slice(i + 1, Math.min(i + 6, words.length));
+    const immediateNorm = immediateWords.map(w => normalize(w.raw)).join(" ");
+    if (/(shivakote|hesaraghatta|hobli|bengaluru|bangalore|karnataka|autonomous|deemed)/i.test(immediateNorm)) {
+      continue;
+    }
+
     bulletCandidates.push({ wordIdx: i, num: num, top: (words[i].deskewedY ?? words[i].top) });
   }
 
@@ -593,8 +608,8 @@ function findVisitorBoundary(words, visitor) {
       const isNumMatch = !isNaN(targetNoInt) && targetNoInt === entry.num;
       const hasAnyPart = allParts.some(p => p.length >= 3 && windowHasPart(entryWords, p));
 
-      // 0. Primary: Bullet number matches AND at least 1 name part matches (direct Colab equivalence)
-      if (isNumMatch && (hasFirst || hasLast || matchingPartsCount >= 1 || hasAnyPart)) {
+      // 0. Primary: Bullet number matches AND first name, last name, or at least 2 name parts match
+      if (isNumMatch && (hasFirst || hasLast || matchingPartsCount >= 2 || (parts.length === 1 && hasFirst))) {
         score = (hasFirst && hasLast) ? 16 : 14;
       }
       // 1. Both first and last name present
@@ -2018,6 +2033,7 @@ async function runHighlighter() {
               start: boundary.start,
               end: boundary.end
             };
+            break; // A visitor entry only appears once per document; stop searching further pages
           }
         }
 
