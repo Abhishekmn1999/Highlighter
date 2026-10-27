@@ -59,116 +59,159 @@ def is_number_token(word, n_str, next_word=None):
             return True
     return False
 
-def visitor_matches_context(v, ctx):
-    clean_ctx = " " + re.sub(r"[^a-z0-9 ]", " ", normalize(ctx)) + " "
-    ctx_words = [w for w in clean_ctx.split() if len(w) >= 2]
+def strip_honorifics(name):
+    return re.sub(r"^(prof|professor|dr|mr|mrs|ms|shri|smt)\.?\s+", "", name, flags=re.IGNORECASE).strip()
 
-    name_parts = [alpha_only(p) for p in re.split(r"[\s,]+", v["name"]) if len(alpha_only(p)) >= 2]
-    honorifics = {"prof", "professor", "dr", "mr", "mrs", "ms"}
-    name_parts = [p for p in name_parts if p not in honorifics]
-    if not name_parts:
+def clean_visitor_name_parts(name):
+    clean = strip_honorifics(name)
+    parts = [p for p in re.split(r"[\s,]+", clean) if len(alpha_only(p)) >= 2]
+    return parts
+
+def name_matches(visitor_name, ctx):
+    parts = clean_visitor_name_parts(visitor_name)
+    if not parts:
         return False
+    first = alpha_only(parts[0])
+    last = alpha_only(parts[-1])
+    ctx_clean = " " + re.sub(r"[^a-z0-9 ]", " ", normalize(ctx)) + " "
+    ctx_words = [w for w in ctx_clean.split() if len(w) >= 2]
 
     def part_in_ctx(p):
-        if f" {p} " in clean_ctx or (len(p) >= 4 and p in clean_ctx):
+        if f" {p} " in ctx_clean:
             return True
-        return any(token_similarity(p, w) >= 0.75 for w in ctx_words if len(w) >= 2)
+        return any(token_similarity(p, w) >= 0.78 for w in ctx_words if len(w) >= 2)
 
-    matched_name_parts = sum(1 for p in name_parts if part_in_ctx(p))
+    if len(parts) == 1:
+        return part_in_ctx(first)
+    return part_in_ctx(first) and part_in_ctx(last)
 
-    if len(name_parts) == 1:
-        name_ok = part_in_ctx(name_parts[0])
-    elif len(name_parts) == 2:
-        name_ok = part_in_ctx(name_parts[0]) and part_in_ctx(name_parts[1])
-    else:
-        name_ok = (matched_name_parts >= 2)
+def is_valid_visitor_start(words, i, visitor):
+    clean_name = strip_honorifics(visitor["name"])
+    parts = clean_visitor_name_parts(clean_name)
+    if not parts:
+        return False
+    first = alpha_only(parts[0])
+    last = alpha_only(parts[-1])
 
-    if not name_ok:
+    immediate_words = words[i + 1: min(i + 5, len(words))]
+    if not immediate_words:
         return False
 
-    detail_words = [alpha_only(w) for w in re.split(r"[\s,;:.()]+", v.get("details", "")) if len(alpha_only(w)) >= 4]
-    stop_words = {"from", "university", "institute", "center", "centre", "school", "physics", "department", "complex", "systems"}
-    key_details = [w for w in detail_words if w not in stop_words]
+    first_word_norm = normalize(immediate_words[0]["raw"])
+    disqualified = ["the", "details", "following", "approval", "sanction", "purpose", "subject", "ref", "dated", "below"]
+    if first_word_norm in disqualified:
+        return False
 
-    if key_details:
-        detail_ok = any(f" {kw} " in clean_ctx or any(token_similarity(kw, cw) >= 0.80 for cw in ctx_words) for kw in key_details)
-        return detail_ok
+    for k in range(len(immediate_words)):
+        if is_number_token(immediate_words[k]["raw"], visitor["no"]):
+            return False
 
-    return True
+    immediate_alpha = [alpha_only(w["raw"]) for w in immediate_words]
+    has_name_part = any(w == first or w == last or (len(w) >= 4 and (first in w or last in w)) for w in immediate_alpha)
+    has_honorific = any(re.match(r"^(dr|prof|mr|mrs|ms|shri|smt)\.?$", normalize(w["raw"])) for w in immediate_words)
 
-def extract_words(page_img, min_conf=20):
-    data = pytesseract.image_to_data(page_img, output_type=pytesseract.Output.DICT, lang="eng", config="--oem 1")
-    words = []
-    for i in range(len(data["text"])):
-        txt = data["text"][i].strip()
-        try:
-            conf = int(data["conf"][i])
-        except (ValueError, TypeError):
-            conf = -1
-        if not txt or conf < min_conf:
-            continue
-        words.append({
-            "raw":    txt,
-            "norm":   normalize(txt),
-            "left":   data["left"][i],
-            "top":    data["top"][i],
-            "right":  data["left"][i] + data["width"][i],
-            "bottom": data["top"][i]  + data["height"][i],
-        })
-    return words
+    if not has_name_part and not has_honorific:
+        return False
+
+    ctx = " ".join(normalize(words[j]["raw"]) for j in range(i + 1, min(i + 18, len(words))))
+    return name_matches(visitor["name"], ctx)
+
+def find_visitor_start_idx(words, visitor):
+    parts = clean_visitor_name_parts(visitor["name"])
+    if not parts:
+        return None
+    first = alpha_only(parts[0])
+    last = alpha_only(parts[-1])
+    target_no = str(visitor["no"])
+
+    # Strategy 1: Anchor by Name Match, then search backward for number token
+    for i, w in enumerate(words):
+        w_alpha = alpha_only(w["raw"])
+        is_first_match = bool(first and (w_alpha == first or (len(first) >= 4 and first in w_alpha)))
+        is_last_match = bool(last and (w_alpha == last or (len(last) >= 4 and last in w_alpha)))
+
+        if is_first_match or is_last_match:
+            window_words = words[max(0, i - 2) : min(len(words), i + 15)]
+            window_str = " ".join(alpha_only(item["raw"]) for item in window_words)
+
+            both_match = bool(first and last and first in window_str and last in window_str)
+            single_long_match = bool((last and len(last) >= 5 and last in window_str) or (first and len(first) >= 5 and first in window_str))
+
+            if both_match or single_long_match:
+                for b in range(i, max(-1, i - 9), -1):
+                    if is_number_token(words[b]["raw"], target_no):
+                        return b
+                    if words[b]["raw"].startswith(target_no) and len(words[b]["raw"]) <= len(target_no) + 2:
+                        return b
+                return max(0, i - 1)
+
+    # Strategy 2: Forward scan fallback
+    for i, w in enumerate(words):
+        if is_number_token(w["raw"], target_no):
+            if is_valid_visitor_start(words, i, visitor):
+                return i
+
+    return None
 
 CLOSING_PHRASES = [
     "we have obtained",
     "passport particulars",
-    "the passport particulars",
+    "prescribed dae format",
     "enclosed with this letter",
     "annexure",
     "yours faithfully",
     "yours sincerely",
     "with regards",
+    "with warm regards",
     "thanking you",
     "telephone",
     "telefon",
+    "website",
     "fax",
+    "e-mail",
+    "email",
+    "icts.res.in",
+    "tifr.res.in",
+    "www.",
+    "http",
+    "dean",
+    "director",
+    "registrar",
+    "encl",
+    "discrepancy"
 ]
 
 def is_closing_text(words, idx):
-    raw = words[idx]["raw"]
-    if re.search(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}", raw):
+    raw_lower = normalize(words[idx]["raw"])
+    if any(k in raw_lower for k in ["telephone", "website", "email", "fax", "www.", "@", "director", "encl", "discrepancy"]):
+        return True
+    if re.search(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}", words[idx]["raw"]):
         return False
-    snippet = " ".join(normalize(words[j]["raw"]) for j in range(idx, min(idx + 4, len(words))))
+    snippet = " ".join(normalize(words[j]["raw"]) for j in range(idx, min(idx + 5, len(words))))
     return any(snippet.startswith(p) for p in CLOSING_PHRASES)
 
+def find_end_idx(words, start_idx, next_no):
+    start_top = words[start_idx]["top"]
+    for i in range(start_idx + 1, len(words)):
+        nxt = words[i + 1]["raw"] if i + 1 < len(words) else None
+        if next_no and is_number_token(words[i]["raw"], next_no, nxt):
+            return i
+        if is_closing_text(words, i):
+            return i
+        if re.fullmatch(r"\d+[.):]?", words[i]["raw"]) and i > start_idx + 8:
+            return i
+        # Safety limit: visitor entry shouldn't exceed 40 words or 350 vertical pixels
+        if i > start_idx + 38 or (words[i]["top"] - start_top > 350):
+            return i
+    return len(words)
+
 def find_visitor_segment(words, visitor):
-    visitor_no = visitor["no"]
-    next_no = str(int(visitor_no) + 1) if visitor_no.isdigit() else None
-    start_idx = None
-
-    for i in range(len(words)):
-        nxt = words[i+1]["raw"] if i + 1 < len(words) else None
-        if is_number_token(words[i]["raw"], visitor_no, nxt):
-            ctx = " ".join(words[j]["raw"] for j in range(i + 1, min(i + 25, len(words))))
-            if visitor_matches_context(visitor, ctx):
-                start_idx = i
-                break
-
+    start_idx = find_visitor_start_idx(words, visitor)
     if start_idx is None:
         return None
-
-    start_top  = words[start_idx]["top"]
-    start_left = words[start_idx]["left"]
-
-    end_idx = len(words)
-    for j in range(start_idx + 1, len(words)):
-        if words[j]["top"] > start_top + 15:
-            nxt = words[j+1]["raw"] if j + 1 < len(words) else None
-            if next_no and is_number_token(words[j]["raw"], next_no, nxt) and words[j]["left"] <= start_left + 60:
-                end_idx = j
-                break
-            if is_closing_text(words, j):
-                end_idx = j
-                break
-
+    visitor_no = visitor["no"]
+    next_no = str(int(visitor_no) + 1) if visitor_no.isdigit() else None
+    end_idx = find_end_idx(words, start_idx, next_no)
     return (start_idx, end_idx)
 
 def group_into_lines(segment, y_tol=12):
