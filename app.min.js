@@ -429,45 +429,70 @@ function tokenSimilarity(a, b) {
 function isFuzzyTokenMatch(token, target) {
   if (!token || !target) return false;
   if (token === target) return true;
+  if (target.length <= 3) return false;
+
   // Common OCR substitutions: l/1 <-> i, 0 <-> o, rn <-> m, vv <-> w
   const simA = token.replace(/[l1]/g, "i").replace(/0/g, "o").replace(/rn/g, "m").replace(/vv/g, "w");
   const simB = target.replace(/[l1]/g, "i").replace(/0/g, "o").replace(/rn/g, "m").replace(/vv/g, "w");
-  if (simA === simB) return true;
-  if (target.length >= 4 && token.length >= 6 && (token.startsWith(target) || target.startsWith(token)) &&
-      Math.min(token.length, target.length) / Math.max(token.length, target.length) >= 0.85) return true;
-  if (target.length >= 4 && token.length >= 3) {
-    if (tokenSimilarity(token, target) >= 0.70) return true;
+  if (simA === simB && simA.length >= 3) return true;
+
+  const lenDiff = Math.abs(token.length - target.length);
+  if (lenDiff <= 1 && target.length >= 4) {
+    if (editDistance(token, target) <= 1) return true;
   }
-  if (target.length >= 3 && Math.abs(token.length - target.length) <= 1) {
-    return editDistance(token, target) <= 1;
+  if (lenDiff <= 2 && target.length >= 7 && token.length >= 6) {
+    if (tokenSimilarity(token, target) >= 0.82 && editDistance(token, target) <= 2) return true;
   }
   return false;
+}
+
+function isTokenMatchForNamePart(a, part) {
+  if (!a || !part) return false;
+  if (a === part) return true;
+  if (part.length <= 3) return a === part;
+  if (a.length >= part.length && a.length <= part.length + 3 && a.includes(part)) return true;
+  return isFuzzyTokenMatch(a, part);
 }
 
 function windowHasPart(windowWords, part) {
-  if (!part) return false;
-  // 1. Single token check
-  const singleMatch = windowWords.some(w => {
-    const a = alphaOnly(w.raw);
-    if (!a || (a.length < 3 && a !== part)) return false;
-    return isFuzzyTokenMatch(a, part) || (a.length >= 4 && a.includes(part)) || (part.length >= 4 && part.includes(a));
-  });
-  if (singleMatch) return true;
-
-  // 2. Concatenated tokens check (handles split spans, intra-word kerning, soft hyphens)
-  const windowJoined = alphaOnly(windowWords.map(w => w.raw).join(""));
-  if (part.length >= 4 && windowJoined.includes(part)) return true;
-
-  // 3. Substring edit distance check against joined window
-  if (part.length >= 5) {
-    for (let s = 0; s <= windowJoined.length - part.length; s++) {
-      const sub = windowJoined.substring(s, s + part.length);
-      if (editDistance(sub, part) <= 1) return true;
+  if (!part || !windowWords || windowWords.length === 0) return false;
+  for (let k = 0; k < windowWords.length; k++) {
+    const a = alphaOnly(windowWords[k].raw);
+    if (isTokenMatchForNamePart(a, part)) return true;
+  }
+  if (part.length >= 4) {
+    for (let k = 0; k < windowWords.length - 1; k++) {
+      const joined = alphaOnly(windowWords[k].raw + windowWords[k + 1].raw);
+      if (isTokenMatchForNamePart(joined, part)) return true;
     }
   }
-
   return false;
 }
+
+function isPureClosingPage(words) {
+  if (!words || words.length < 5) return false;
+  const fullText = words.map(w => normalize(w.raw)).join(" ");
+  const hasClosingMarker = 
+    fullText.includes("rajesh gopakumar") ||
+    fullText.includes("centre director") ||
+    fullText.includes("i am writing to request you to approve") ||
+    fullText.includes("with best regards") ||
+    fullText.includes("as stated above") ||
+    fullText.includes("discrepancy the english version") ||
+    fullText.includes("prevail and will be binding") ||
+    fullText.includes("survey no 151") ||
+    fullText.includes("hesaraghatta hobli");
+
+  if (!hasClosingMarker) return false;
+
+  const hasDateRange = /\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b.*?\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/.test(
+    words.map(w => w.raw).join(" ")
+  );
+  const hasVisitorsPreamble = fullText.includes("visitors details are as follows") || fullText.includes("details are as follows");
+
+  return !hasDateRange && !hasVisitorsPreamble;
+}
+
 
 function getVisitorPreambleBarrierIdx(words) {
   if (!words || words.length === 0) return 0;
@@ -680,6 +705,9 @@ function splitMultiVisitorEntries(entries, words) {
 
 
 function findVisitorBoundary(words, visitor) {
+  if (!words || words.length === 0) return null;
+  if (isPureClosingPage(words)) return null;
+
   const parts = cleanVisitorNameParts(visitor.name);
   if (!parts.length) return null;
 
@@ -704,45 +732,27 @@ function findVisitorBoundary(words, visitor) {
       const matchingPartsCount = allParts.filter(p => windowHasPart(entryWords, p)).length;
 
       const isNumMatch = !isNaN(targetNoInt) && targetNoInt === entry.num;
-      const hasAnyPart = allParts.some(p => p.length >= 3 && windowHasPart(entryWords, p));
 
-      // 0. Primary: Bullet number matches AND first name, last name, or at least 2 name parts match
-      if (isNumMatch && (hasFirst || hasLast || matchingPartsCount >= 2 || (parts.length === 1 && hasFirst))) {
-        score = (hasFirst && hasLast) ? 16 : 14;
-      }
-      // 1. Both first and last name present
-      else if (hasFirst && hasLast) {
-        score = isNumMatch ? 16 : 12;
-      }
-      // 2. Initial + Last name (e.g. "P. Chandra")
-      else if (hasLast && last.length >= 4) {
-        const initial = first[0];
+      // STRICT SCORING: An entry CANNOT match a visitor unless the visitor's name is present!
+      if (hasFirst && hasLast) {
+        score = isNumMatch ? 18 : 14;
+      } else if (isNumMatch && (hasFirst || hasLast || matchingPartsCount >= 2 || (parts.length === 1 && hasFirst))) {
+        score = 15;
+      } else if (hasLast && last.length >= 4) {
+        const initial = first ? first[0] : "";
         const hasInitial = entryWords.some(w => {
           const a = alphaOnly(w.raw);
           return a === initial && w.raw.length <= 2;
         });
         if (hasInitial) {
-          score = isNumMatch ? 15 : 10;
-        } else if (matchingPartsCount >= 1) {
-          score = isNumMatch ? 14 : 10;
+          score = isNumMatch ? 15 : 11;
+        } else if (matchingPartsCount >= 1 && isNumMatch) {
+          score = 14;
         }
-      }
-      // 3. At least 2 significant name parts present
-      else if (matchingPartsCount >= 2) {
+      } else if (matchingPartsCount >= 2) {
+        score = isNumMatch ? 15 : 11;
+      } else if (parts.length === 1 && hasFirst) {
         score = isNumMatch ? 15 : 10;
-      }
-      // 4. Single-word name (mononym)
-      else if (parts.length === 1 && hasFirst) {
-        score = isNumMatch ? 14 : 9;
-      }
-      // 5. Distinctive unique name (>= 6 characters)
-      else if (allParts.some(p => p.length >= 6 && windowHasPart(entryWords, p))) {
-        score = isNumMatch ? 14 : 9;
-      }
-
-      // Bonus if bullet number matches targetNo
-      if (score > 0 && isNumMatch) {
-        score += 3;
       }
 
       // Cross-document verification: check country/institution details if present
@@ -767,7 +777,7 @@ function findVisitorBoundary(words, visitor) {
       }
     }
 
-    if (bestEntry && bestScore >= 8) {
+    if (bestEntry && bestScore >= 10) {
       return {
         start: bestEntry.start,
         end: bestEntry.end,
@@ -786,7 +796,6 @@ function findVisitorBoundary(words, visitor) {
 
   for (let i = barrierIdx; i < words.length; i++) {
     if (isClosingParagraph(words, i)) continue; // Skip tokens that fall inside closing headers/footers
-
 
     const rawTok = words[i].raw;
     const wAlpha = alphaOnly(rawTok);
@@ -838,31 +847,28 @@ function findVisitorBoundary(words, visitor) {
     const hasFirst = windowHasPart(windowWords, first);
     const hasLast = windowHasPart(windowWords, last);
     const matchingPartsCount = allParts.filter(p => windowHasPart(windowWords, p)).length;
-    const hasAnyPart = allParts.some(p => p.length >= 3 && windowHasPart(windowWords, p));
 
+    // STRICT NAME GUARD: Require actual name presence to match in Strategy 2
     let score = 0;
-    if (hasTargetNum && (hasFirst || hasLast || matchingPartsCount >= 1 || hasAnyPart)) {
-      score = (hasFirst && hasLast) ? 16 : 14;
-    } else if (hasFirst && hasLast) {
-      score = hasTargetNum ? 14 : 10;
-    } else if (hasTargetNum && hasLast && last.length >= 4) {
-      score = 12;
-    } else if (hasTargetNum && hasFirst && first.length >= 4) {
-      score = 12;
+    if (hasFirst && hasLast) {
+      score = hasTargetNum ? 16 : 12;
+    } else if (hasTargetNum && (hasFirst || hasLast)) {
+      score = 14;
+    } else if (hasTargetNum && matchingPartsCount >= 2) {
+      score = 13;
     } else if (hasLast && last.length >= 4) {
-      const initial = first[0];
+      const initial = first ? first[0] : "";
       const hasInitial = windowWords.some(w => {
         const a = alphaOnly(w.raw);
         return a === initial && w.raw.length <= 2;
       });
       if (hasInitial) {
-        score = hasTargetNum ? 12 : 9;
+        score = hasTargetNum ? 13 : 10;
       }
-    } else if (matchingPartsCount >= 2) {
-      score = hasTargetNum ? 12 : 8;
-    } else if (hasAnyPart && allParts.some(p => p.length >= 6 && windowHasPart(windowWords, p))) {
-      score = hasTargetNum ? 14 : 0;
+    } else if (parts.length === 1 && hasFirst) {
+      score = hasTargetNum ? 14 : 10;
     }
+
 
     if (score > bestScore) {
       bestScore = score;
@@ -1947,12 +1953,24 @@ async function runPythonHighlighter(pythonApiUrl, highlightColor) {
     });
   }
 
-  // Sort individual PDFs by original spreadsheet order
+  // Sort individual PDFs by original spreadsheet order and ensure strict uniqueness
   individualPdfs.sort((a, b) => {
     const sA = a.visitor?.sheet_idx !== undefined ? a.visitor.sheet_idx : 999;
     const sB = b.visitor?.sheet_idx !== undefined ? b.visitor.sheet_idx : 999;
     return sA - sB;
   });
+
+  const uniqueIndividualPdfs = [];
+  const seenPdfs = new Set();
+  for (const item of individualPdfs) {
+    const key = item.visitor ? (item.visitor.uid || String(item.visitor.no)) : item.name;
+    if (!seenPdfs.has(key)) {
+      seenPdfs.add(key);
+      uniqueIndividualPdfs.push(item);
+    }
+  }
+  individualPdfs.length = 0;
+  individualPdfs.push(...uniqueIndividualPdfs);
 
   // Render preview canvases for the Live Document Viewer
   updateProgress(90, "Rendering preview pages for Live Viewer...");
@@ -2125,6 +2143,11 @@ async function runHighlighter() {
 
       // Detect visitors
       for (const v of state.visitors) {
+        // Strict multi-document isolation: skip visitors already matched in an earlier PDF!
+        if (foundVisitorUids.has(v.uid) || foundVisitorNos.has(String(v.no))) {
+          continue;
+        }
+
         const segs = {};
 
         for (let pNum = 0; pNum < pageWordsList.length; pNum++) {
@@ -2143,7 +2166,7 @@ async function runHighlighter() {
 
         if (Object.keys(segs).length > 0) {
           foundVisitorUids.add(v.uid);
-          foundVisitorNos.add(v.no);
+          foundVisitorNos.add(String(v.no));
           visitorsInThisPdf.push(v);
           visitorSegments[v.uid] = segs;
           visitorSegments[v.no] = segs;

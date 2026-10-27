@@ -141,6 +141,69 @@ def visitor_matches_context(v, ctx):
 
     return True
 
+def strip_honorifics(name):
+    return re.sub(r"^(prof|dr|mr|mrs|ms|shri|smt)\.?\s+", "", name.strip(), flags=re.IGNORECASE)
+
+def name_matches(target_name, ctx):
+    parts = clean_visitor_name_parts(target_name)
+    if not parts:
+        return False
+    first = alpha_only(parts[0])
+    last = alpha_only(parts[-1])
+    ctx_alpha = [alpha_only(w) for w in ctx.split()]
+    has_first = any(w == first or (len(first) >= 4 and token_similarity(w, first) >= 0.75) for w in ctx_alpha)
+    has_last = any(w == last or (len(last) >= 4 and token_similarity(w, last) >= 0.75) for w in ctx_alpha)
+    if len(parts) >= 2:
+        return has_first or has_last
+    return has_first
+
+def is_valid_visitor_start(words, i, visitor):
+    clean_name = strip_honorifics(visitor["name"])
+    parts = clean_visitor_name_parts(clean_name)
+    if not parts:
+        return False
+    first = alpha_only(parts[0])
+    last = alpha_only(parts[-1])
+
+    immediate_words = words[i + 1: min(i + 5, len(words))]
+    if not immediate_words:
+        return False
+
+    first_word_norm = normalize(immediate_words[0]["raw"])
+    disqualified = ["the", "details", "following", "approval", "sanction", "purpose", "subject", "ref", "dated", "below"]
+    if first_word_norm in disqualified:
+        return False
+
+    for k in range(len(immediate_words)):
+        if is_number_token(immediate_words[k]["raw"], visitor["no"]):
+            return False
+
+    immediate_alpha = [alpha_only(w["raw"]) for w in immediate_words]
+    has_name_part = any(w == first or w == last or (len(w) >= 4 and (first in w or last in w)) for w in immediate_alpha)
+    has_honorific = any(re.match(r"^(dr|prof|mr|mrs|ms|shri|smt)\.?$", normalize(w["raw"])) for w in immediate_words)
+
+    if not has_name_part and not has_honorific:
+        return False
+
+    ctx = " ".join(normalize(words[j]["raw"]) for j in range(i + 1, min(i + 16, len(words))))
+    return name_matches(visitor["name"], ctx)
+
+def is_pure_closing_page(words):
+    if not words or len(words) < 5:
+        return False
+    full_text = " ".join(normalize(w["raw"]) for w in words)
+    has_closing = any(k in full_text for k in [
+        "rajesh gopakumar", "centre director", "i am writing to request you to approve",
+        "with best regards", "as stated above", "discrepancy the english version",
+        "survey no 151", "hesaraghatta hobli"
+    ])
+    if not has_closing:
+        return False
+    raw_str = " ".join(w["raw"] for w in words)
+    has_date_range = bool(re.search(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b.*?\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", raw_str))
+    has_preamble = "visitors details are as follows" in full_text or "details are as follows" in full_text
+    return not has_date_range and not has_preamble
+
 def find_visitor_start_idx(words, visitor, barrier_idx=0):
     parts = clean_visitor_name_parts(visitor["name"])
     if not parts:
@@ -247,7 +310,7 @@ def find_end_idx(words, start_idx, next_no):
     return len(words)
 
 def find_visitor_segment(words, visitor):
-    if not words:
+    if not words or is_pure_closing_page(words):
         return None
     barrier_idx = get_visitor_preamble_barrier_idx(words)
     visitor_no = str(visitor["no"])
@@ -403,6 +466,7 @@ async def highlight_documents(
     with tempfile.TemporaryDirectory() as temp_dir:
         master_source_pdfs = []
         completed_sheet_indices = set()
+        completed_nos = set()
         matched_records = []
         individual_pdf_buffers = []
 
@@ -427,10 +491,10 @@ async def highlight_documents(
 
             for v in all_visitors:
                 sheet_idx = v["sheet_idx"]
-                v_no      = v["no"]
+                v_no      = str(v["no"])
                 v_name    = v["name"]
 
-                if sheet_idx in completed_sheet_indices:
+                if sheet_idx in completed_sheet_indices or v_no in completed_nos:
                     continue
 
                 for p_idx, words in enumerate(page_words):
@@ -440,6 +504,7 @@ async def highlight_documents(
                         pdf_matches.append((v, p_idx, start_i, end_i))
                         all_segments_by_page[p_idx].append((start_i, end_i))
                         completed_sheet_indices.add(sheet_idx)
+                        completed_nos.add(v_no)
                         matched_records.append({
                             "sheet_idx": sheet_idx + 1,
                             "doc_no": v_no,
